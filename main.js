@@ -495,6 +495,7 @@ class Simulation {
     this.globalSuccessSignal = null;
     this.player = null;
     this.simTime = 0;
+    this.didInitialResolve = false;
     this.initializeAgents();
   }
   findSpawnPoint(existingAgents) {
@@ -996,9 +997,20 @@ class Simulation {
           const overlap = (minDist - dist) / minDist;
           const nx = dx / dist;
           const ny = dy / dist;
-          const agentMoving = agent.state === STATE.WALKING ? 0.8 : 0.2;
-          const otherMoving = other.state === STATE.WALKING ? 0.8 : 0.2;
+          const agentMoving = agent.state === STATE.WALKING ? 1 : agent.state === STATE.IDLE ? 0.2 : 0;
+          const otherMoving = other.state === STATE.WALKING ? 1 : other.state === STATE.IDLE ? 0.2 : 0;
           const total = agentMoving + otherMoving;
+          if (total === 0) {
+            if (this.didInitialResolve) {
+              return;
+            }
+            const push = overlap * 0.4;
+            agent.x += nx * push * 0.5;
+            agent.y += ny * push * 0.5;
+            other.x -= nx * push * 0.5;
+            other.y -= ny * push * 0.5;
+            return;
+          }
           const push = overlap * 0.8;
           agent.x += nx * push * (agentMoving / total);
           agent.y += ny * push * (agentMoving / total);
@@ -1007,6 +1019,7 @@ class Simulation {
         });
       });
     }
+    this.didInitialResolve = true;
     this.agents.forEach((agent) => {
       if (!isInsideLake(agent.x, agent.y)) {
         const projected = projectInsideLake(agent.x, agent.y, PARAMS.lakeSafeInset);
