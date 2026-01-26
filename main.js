@@ -1171,10 +1171,8 @@ const config = {
   parent: "game",
   backgroundColor: "#1a2d45",
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: PARAMS.width,
-    height: PARAMS.height,
   },
   scene: {
     preload,
@@ -1200,7 +1198,9 @@ function create() {
   graphics = this.add.graphics();
   setupUI();
   resetSimulation();
-  resizeGame();
+  fitCameraToContainer(this);
+  window.addEventListener("resize", () => fitCameraToContainer(this));
+  window.addEventListener("orientationchange", () => fitCameraToContainer(this));
   this.input.addPointer(1);
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
@@ -1228,18 +1228,16 @@ function create() {
   }
 }
 
-function resizeGame() {
-  const container = document.getElementById("game");
-  if (!container) return;
-  const w = container.clientWidth;
-  const h = container.clientHeight;
-  game.scale.resize(PARAMS.width, PARAMS.height);
-  game.scale.setZoom(Math.min(w / PARAMS.width, h / PARAMS.height));
-  game.scale.refresh();
+function fitCameraToContainer(scene) {
+  const el = document.getElementById("game");
+  if (!el) return;
+  const w = Math.max(1, el.clientWidth);
+  const h = Math.max(1, el.clientHeight);
+  scene.scale.resize(w, h);
+  const zoom = Math.min(w / PARAMS.width, h / PARAMS.height);
+  scene.cameras.main.setZoom(zoom);
+  scene.cameras.main.centerOn(PARAMS.width / 2, PARAMS.height / 2);
 }
-
-window.addEventListener("resize", resizeGame);
-window.addEventListener("orientationchange", resizeGame);
 
 function update(time) {
   if (!sim) return;
