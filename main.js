@@ -440,6 +440,44 @@ class Simulation {
       duration: 1.6,
       isPlayer: agent.isPlayer,
     });
+    this.spawnFishIcon(agent);
+  }
+  spawnFishIcon(agent) {
+    const scene = this.scene;
+    const size = agent.isPlayer ? 12 : 10;
+    const bodyColor = agent.isPlayer ? 0xfff3a1 : 0xb7f0ff;
+    const fish = scene.add.container(agent.x, agent.y - 18);
+    const body = scene.add.ellipse(0, 0, size * 1.4, size, bodyColor, 0.95);
+    const tail = scene.add.triangle(
+      -size * 1.2,
+      0,
+      0,
+      -size * 0.5,
+      -size * 0.8,
+      0,
+      0,
+      size * 0.5,
+      bodyColor,
+      0.95
+    );
+    const eye = scene.add.circle(size * 0.4, -size * 0.2, 1.5, 0x0b1220, 0.95);
+    fish.add([body, tail, eye]);
+    scene.tweens.add({
+      targets: fish,
+      y: fish.y - 25,
+      alpha: 0,
+      duration: 3000,
+      ease: "Sine.easeOut",
+      onComplete: () => fish.destroy(),
+    });
+    scene.tweens.add({
+      targets: fish,
+      rotation: 0.25,
+      duration: 350,
+      yoyo: true,
+      repeat: 6,
+      ease: "Sine.easeInOut",
+    });
   }
   notifyNeighborCatch(catchingAgent) {
     const player = this.player;
@@ -730,36 +768,11 @@ function drawCatchEffects() {
     const alpha = 0.9 * (1 - progress);
     graphics.lineStyle(2, 0xaaf5ff, alpha);
     graphics.strokeCircle(effect.x, effect.y, radius);
-    drawFishIcon(effect);
     if (effect.isPlayer) {
       graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
       graphics.strokeCircle(effect.x, effect.y, radius + 10);
     }
   });
-}
-
-function drawFishIcon(effect) {
-  const progress = effect.timer / effect.duration;
-  const rise = 25 * progress;
-  const wiggle = Math.sin(progress * Math.PI * 6) * 0.2;
-  const size = effect.isPlayer ? 12 : 10;
-  const x = effect.x;
-  const y = effect.y - 18 - rise;
-  const alpha = 0.95 * (1 - progress);
-  graphics.save();
-  graphics.translate(x, y);
-  graphics.rotate(wiggle);
-  graphics.fillStyle(effect.isPlayer ? 0xfff3a1 : 0xb7f0ff, alpha);
-  graphics.fillEllipse(0, 0, size * 1.4, size);
-  graphics.beginPath();
-  graphics.moveTo(-size * 0.9, 0);
-  graphics.lineTo(-size * 1.5, -size * 0.5);
-  graphics.lineTo(-size * 1.5, size * 0.5);
-  graphics.closePath();
-  graphics.fillPath();
-  graphics.fillStyle(0x0b1220, alpha);
-  graphics.fillCircle(size * 0.4, -size * 0.2, 1.5);
-  graphics.restore();
 }
 
 function setupUI() {
