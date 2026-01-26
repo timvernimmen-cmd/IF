@@ -1094,6 +1094,8 @@ const toastState = {
   lifetime: 2.5,
 };
 
+const clickMarkers = [];
+
 const config = {
   type: Phaser.CANVAS,
   width: PARAMS.width,
@@ -1126,18 +1128,36 @@ function create() {
   setupUI();
   this.input.on("pointerdown", (pointer) => {
     const player = getPlayer();
-    if (!player) return;
-    if (pointer.x <= WORLD.leftUiWidth + WORLD.margin) {
+    if (!player || !sim) {
+      console.log("CLICK_IGNORED", "sim-not-ready");
       return;
     }
     const eventTarget = pointer.event?.target;
-    if (eventTarget?.closest?.("#hudColumn")) {
+    const clientX = pointer.event?.clientX ?? 0;
+    const clientY = pointer.event?.clientY ?? 0;
+    const elementAtPoint = pointer.event ? document.elementFromPoint(clientX, clientY) : null;
+    if (eventTarget?.closest?.("#hudColumn") || elementAtPoint?.closest?.("#hudColumn")) {
+      console.log("CLICK_IGNORED", "hud-hit");
       return;
     }
-    const elementAtPoint = pointer.event
-      ? document.elementFromPoint(pointer.event.clientX, pointer.event.clientY)
-      : null;
-    if (elementAtPoint?.closest?.("#hudColumn")) {
+    const hudColumn = document.getElementById("hudColumn");
+    if (hudColumn) {
+      const rect = hudColumn.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        console.log("CLICK_IGNORED", "in-gutter");
+        return;
+      }
+    }
+    if (!isInsideLake(pointer.x, pointer.y)) {
+      console.log("CLICK_IGNORED", "outside-lake");
+      return;
+    }
+    if (distanceToLakeEdge(pointer.x, pointer.y) < PARAMS.minShoreDist) {
+      console.log("CLICK_IGNORED", "too-close-to-shore");
+      return;
+    }
+    if (sim.isPointTooCloseToHole(pointer.x, pointer.y)) {
+      console.log("CLICK_IGNORED", "too-close-to-hole");
       return;
     }
     const snapped = sim.clampDestination(pointer.x, pointer.y);
@@ -1154,6 +1174,8 @@ function create() {
     player.state = STATE.WALKING;
     player.intentAfterArrival = "DRILL_THEN_FISH";
     player.moveCount += 1;
+    clickMarkers.push({ x: snapped.x, y: snapped.y, timer: 0, duration: 0.5 });
+    console.log("MAP_CLICK", { x: snapped.x, y: snapped.y });
   });
 }
 
@@ -1190,6 +1212,7 @@ function renderScene(time) {
   graphics.clear();
   drawLakeBackground();
   drawHoles();
+  drawClickMarkers();
   drawAgents(time);
   drawCatchEffects();
 }
@@ -1230,6 +1253,21 @@ function drawHoles() {
     graphics.lineStyle(1, 0x6aaed6, 0.3);
     graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRingRadius);
   });
+}
+
+function drawClickMarkers() {
+  for (let i = clickMarkers.length - 1; i >= 0; i -= 1) {
+    const marker = clickMarkers[i];
+    marker.timer += lastDt || 0;
+    const progress = marker.timer / marker.duration;
+    if (progress >= 1) {
+      clickMarkers.splice(i, 1);
+      continue;
+    }
+    const alpha = 0.6 * (1 - progress);
+    graphics.lineStyle(2, 0xfff2a6, alpha);
+    graphics.strokeCircle(marker.x, marker.y, 6 + progress * 6);
+  }
 }
 
 function drawAgents(time) {
@@ -1312,6 +1350,7 @@ function setupUI() {
   UI.rank = document.getElementById("player-rank");
   UI.debugState = document.getElementById("debug-state");
   UI.statsLine = document.getElementById("stats-line");
+  UI.playerDebug = document.getElementById("player-debug");
   UI.gutPanel = document.getElementById("gut-panel");
   UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
@@ -1498,6 +1537,13 @@ function updateHUD() {
     UI.statsLine.textContent = `Moves: ${(totalMoves / agentCount).toFixed(1)} | Holes: ${(
       totalHoles / agentCount
     ).toFixed(1)} | Catches: ${(totalCatches / agentCount).toFixed(1)}`;
+  }
+  if (UI.playerDebug) {
+    const dest = sim.player.destination;
+    const dist = Math.hypot(dest.x - sim.player.x, dest.y - sim.player.y);
+    UI.playerDebug.textContent = `PlayerState: ${sim.player.state} | Dest: ${dest.x.toFixed(
+      1
+    )},${dest.y.toFixed(1)} | Dist: ${dist.toFixed(1)}`;
   }
   if (uiState.showGut) {
     updateGutPanel();
