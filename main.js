@@ -9,17 +9,16 @@ const PARAMS = {
   fishingBoutMin: 35,
   fishingBoutMax: 75,
   baseCatchRate: 0.035,
-  holeRadius: 2,
-  holeRingRadius: 4,
-  holeClearance: 8,
+  holeVisualRadius: 2,
+  holeRingRadius: 3,
+  holeSafetyRadius: 14,
+  agentRadius: 10,
   holeMinSpacing: 12,
   minHoleSpacing: 30,
   minShoreDist: 24,
   lakeSafeInset: 8,
   minDwell: 20,
   minSpawnDist: 26,
-  repulseRadius: 18,
-  repulseStrength: 0.6,
   targetDwell: 35,
   leaveCheckInterval: 10,
   fishGridCols: 80,
@@ -546,7 +545,7 @@ class Simulation {
   getHoleObstacles() {
     return [...this.holes, ...this.reservations];
   }
-  isPointTooCloseToHole(x, y, clearance = PARAMS.holeClearance) {
+  isPointTooCloseToHole(x, y, clearance = PARAMS.holeSafetyRadius) {
     const { minDistSq } = nearestHoleDistanceSquared(x, y, this.getHoleObstacles());
     return minDistSq < clearance * clearance;
   }
@@ -555,7 +554,7 @@ class Simulation {
     this.updateSpatialHash();
     this.fishField.recover(dt);
     this.agents.forEach((agent) => this.updateAgent(agent, dt));
-    this.applyRepulsion(dt);
+    this.resolveCollisions(dt);
   }
   updateAgent(agent, dt) {
     agent.timeSinceLastCatch += dt;
@@ -954,25 +953,42 @@ class Simulation {
     );
   }
 
-  applyRepulsion(dt) {
-    const radius = PARAMS.repulseRadius;
-    const strength = PARAMS.repulseStrength;
+  resolveCollisions(dt) {
+    const radius = PARAMS.agentRadius;
+    const minDist = radius * 2;
+    const maxStep = radius;
+    const iterations = 4;
     for (let i = 0; i < this.agents.length; i += 1) {
-      for (let j = i + 1; j < this.agents.length; j += 1) {
-        const a = this.agents[i];
-        const b = this.agents[j];
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist === 0 || dist >= radius) continue;
-        const push = ((radius - dist) / radius) * strength * dt;
-        const nx = dx / dist;
-        const ny = dy / dist;
-        a.x += nx * push;
-        a.y += ny * push;
-        b.x -= nx * push;
-        b.y -= ny * push;
+      const agent = this.agents[i];
+      const step = agent.speed * dt;
+      if (step > maxStep && agent.state === STATE.WALKING) {
+        const scale = maxStep / step;
+        agent.x = agent.x + (agent.destination.x - agent.x) * scale;
+        agent.y = agent.y + (agent.destination.y - agent.y) * scale;
       }
+    }
+    for (let iter = 0; iter < iterations; iter += 1) {
+      this.agents.forEach((agent) => {
+        const neighbors = this.spatialHash.neighbors(agent.x, agent.y, minDist);
+        neighbors.forEach((other) => {
+          if (other.id === agent.id) return;
+          const dx = agent.x - other.x;
+          const dy = agent.y - other.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist === 0 || dist >= minDist) return;
+          const overlap = (minDist - dist) / minDist;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const agentMoving = agent.state === STATE.WALKING ? 0.8 : 0.2;
+          const otherMoving = other.state === STATE.WALKING ? 0.8 : 0.2;
+          const total = agentMoving + otherMoving;
+          const push = overlap * 0.8;
+          agent.x += nx * push * (agentMoving / total);
+          agent.y += ny * push * (agentMoving / total);
+          other.x -= nx * push * (otherMoving / total);
+          other.y -= ny * push * (otherMoving / total);
+        });
+      });
     }
     this.agents.forEach((agent) => {
       if (!isInsideLake(agent.x, agent.y)) {
@@ -1021,7 +1037,7 @@ class Simulation {
 
   snapTargetOutsideHoles(x, y) {
     const { minDistSq, nearest } = nearestHoleDistanceSquared(x, y, this.getHoleObstacles());
-    const clearance = PARAMS.holeClearance;
+    const clearance = PARAMS.holeSafetyRadius;
     if (!nearest || minDistSq >= clearance * clearance) {
       return { x, y };
     }
@@ -1247,7 +1263,7 @@ function drawLakeBackground() {
 function drawHoles() {
   sim.holes.forEach((hole) => {
     graphics.fillStyle(0x0b1420, 1);
-    graphics.fillCircle(hole.x, hole.y, PARAMS.holeRadius);
+    graphics.fillCircle(hole.x, hole.y, PARAMS.holeVisualRadius);
     graphics.lineStyle(1, 0x6aaed6, 0.3);
     graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRingRadius);
   });
@@ -1316,7 +1332,7 @@ function drawDrillProgress(agent) {
 function drawFishingLine(agent, time) {
   const rodTip = getRodTip(agent);
   graphics.fillStyle(0x0b1420, 1);
-  graphics.fillCircle(rodTip.x, rodTip.y, PARAMS.holeRadius);
+  graphics.fillCircle(rodTip.x, rodTip.y, PARAMS.holeVisualRadius);
   graphics.lineStyle(1, 0x6aaed6, 0.3);
   graphics.strokeCircle(rodTip.x, rodTip.y, PARAMS.holeRingRadius);
   const bobOffset = Math.sin(time * 2 + agent.id) * 2;
@@ -1335,7 +1351,7 @@ function drawCatchEffects() {
     effect.timer += lastDt || 0;
     const progress = effect.timer / effect.duration;
     const alpha = 0.85 * (1 - progress);
-    const baseRadius = PARAMS.holeRingRadius;
+  const baseRadius = PARAMS.holeRingRadius;
     for (let i = 0; i < 3; i += 1) {
       const ringRadius = baseRadius + progress * (8 + i * 4);
       graphics.lineStyle(2, 0xaaf5ff, alpha * (1 - i * 0.2));
@@ -1357,7 +1373,6 @@ function setupUI() {
   UI.statsLine = document.getElementById("stats-line");
   UI.playerDebug = document.getElementById("player-debug");
   UI.gutPanel = document.getElementById("gut-panel");
-  UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
   UI.gutMessage = document.getElementById("gut-message");
   UI.gutSocial = document.getElementById("gut-social");
@@ -1667,40 +1682,47 @@ function updateGutPanel() {
     PARAMS.neighborRadius,
     player.id
   );
-  const anchorBonus = sim.simTime < player.anchorUntil ? PARAMS.anchorStrength : 0;
-  const crowdBonus = 0;
-  const socialCue = -PARAMS.socialCueWeight * nearbyRecentSuccessCount;
   const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
   const compression = REAL_MATCH_SECONDS / targetGameSeconds;
   const timeSinceLastCatchReal = player.timeSinceLastCatch / compression;
   const tau = timeSinceLastCatchReal / REAL_MATCH_SECONDS;
-  const timeTerm = tau / 0.35;
-  const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
-  const pressure = 1 / (1 + Math.exp(-leaveScore));
-  const clampedPressure = Phaser.Math.Clamp(pressure, 0, 1);
   UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
   if (UI.gutRecent) {
     UI.gutRecent.textContent = `Nearby recent catches: ${nearbyRecentSuccessCount}`;
   }
+  let socialLabel = "none";
+  if (nearbyRecentSuccessCount >= 4) {
+    socialLabel = "strong";
+  } else if (nearbyRecentSuccessCount >= 2) {
+    socialLabel = "moderate";
+  } else if (nearbyRecentSuccessCount >= 1) {
+    socialLabel = "weak";
+  }
   if (UI.gutSocial) {
-    let socialLabel = "none";
-    if (nearbyRecentSuccessCount >= 4) {
-      socialLabel = "strong";
-    } else if (nearbyRecentSuccessCount >= 2) {
-      socialLabel = "moderate";
-    } else if (nearbyRecentSuccessCount >= 1) {
-      socialLabel = "weak";
-    }
     UI.gutSocial.textContent = socialLabel;
   }
   if (UI.gutMessage) {
+    let shift = 0;
+    if (socialLabel === "weak") {
+      shift = 0.005;
+    } else if (socialLabel === "moderate") {
+      shift = 0.01;
+    } else if (socialLabel === "strong") {
+      shift = 0.015;
+    }
+    const t0 = 0.01 + shift;
+    const t1 = 0.03 + shift;
+    const t2 = 0.06 + shift;
+    const t3 = 0.1 + shift;
     let message = "Most fishers would stay.";
-    if (clampedPressure >= 0.75) {
+    if (tau >= t3) {
       message = "Nearly everyone would leave now.";
-    } else if (clampedPressure >= 0.55) {
+    } else if (tau >= t2) {
       message = "Most fishers would leave now.";
-    } else if (clampedPressure >= 0.35) {
+    } else if (tau >= t1) {
       message = "Borderline: many fishers would consider moving.";
+    } else if (tau >= t0) {
+      message = "Some fishers would consider moving.";
     }
     UI.gutMessage.textContent = message;
   }
