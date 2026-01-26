@@ -2,11 +2,16 @@ const PARAMS = {
   width: 860,
   height: 540,
   mapMargin: 16,
-  npcCount: 40,
-  npcSpeed: 60,
-  playerSpeed: 80,
+  npcCount: 9,
+  npcSpeed: 28,
+  playerSpeed: 32,
   drillTime: 8,
   baseCatchRate: 0.03,
+  holeRadius: 7,
+  minHoleSpacing: 30,
+  minDwell: 600,
+  targetDwell: 900,
+  leaveCheckInterval: 10,
   fishGridCols: 80,
   fishGridRows: 50,
   patchiness: 6,
@@ -212,8 +217,10 @@ class Agent {
     this.lastMoveDirectionAngle = 0;
     this.recentSuccessTimer = 0;
     this.drillTimer = 0;
+    this.leaveCheckTimer = 0;
     this.hasHole = false;
     this.hole = null;
+    this.reservedSpot = null;
     this.trail = [];
     this.trailTimer = 0;
   }
@@ -236,6 +243,8 @@ class Simulation {
     this.spatialHash = new SpatialHash(60, PARAMS.width, PARAMS.height);
     this.agents = [];
     this.holes = [];
+    this.reservations = [];
+    this.catchEffects = [];
     this.player = null;
     this.simTime = 0;
     this.gutEvents = [];
@@ -309,8 +318,14 @@ class Simulation {
       if (agent.isPlayer) {
         agent.state = STATE.IDLE;
       } else {
-        agent.state = STATE.DRILLING;
-        agent.drillTimer = PARAMS.drillTime;
+        if (this.isHoleLocationValid(agent.x, agent.y)) {
+          this.reserveHole(agent);
+          agent.state = STATE.DRILLING;
+          agent.drillTimer = PARAMS.drillTime;
+          agent.timeAtCurrentSpot = 0;
+        } else {
+          this.pickDestination(agent);
+        }
       }
       return;
     }
@@ -323,6 +338,7 @@ class Simulation {
   updateDrilling(agent, dt) {
     agent.drillTimer = Math.max(0, agent.drillTimer - dt);
     if (agent.drillTimer <= 0) {
+      this.releaseReservation(agent);
       agent.state = agent.isPlayer ? STATE.READY : STATE.FISHING;
       agent.hasHole = true;
       agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
@@ -331,6 +347,7 @@ class Simulation {
   }
   updateFishing(agent, dt) {
     agent.timeAtCurrentSpot += dt;
+    agent.leaveCheckTimer += dt;
     const fishDensity = this.fishField.sample(agent.x, agent.y);
     const pCatchPerSecond = PARAMS.baseCatchRate * fishDensity;
     const catchProb = 1 - Math.exp(-pCatchPerSecond * dt);
@@ -340,6 +357,7 @@ class Simulation {
       agent.hasCaughtHere = true;
       agent.recentSuccessTimer = PARAMS.successWindow;
       this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
+      this.spawnCatchEffects(agent);
       if (agent.isPlayer) {
         this.pushGutEvent("You caught a fish (pressure reset).", "success");
       } else {
@@ -348,6 +366,13 @@ class Simulation {
     }
 
     if (!agent.isPlayer) {
+      if (agent.timeAtCurrentSpot < PARAMS.minDwell) {
+        return;
+      }
+      if (agent.leaveCheckTimer < PARAMS.leaveCheckInterval) {
+        return;
+      }
+      agent.leaveCheckTimer = 0;
       const localDensity = this.spatialHash.countWithin(
         agent.x,
         agent.y,
@@ -356,7 +381,9 @@ class Simulation {
       );
       const anchorBonus = agent.hasCaughtHere ? PARAMS.anchorStrength : 0;
       const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
-      const leaveScore = PARAMS.gutK * agent.timeSinceLastCatch - anchorBonus + crowdBonus;
+      const dwellFactor = Math.max(0, PARAMS.targetDwell - agent.timeAtCurrentSpot) * -0.001;
+      const leaveScore =
+        PARAMS.gutK * agent.timeSinceLastCatch - anchorBonus + crowdBonus + dwellFactor;
       const leaveProbPerSecond = 1 / (1 + Math.exp(-leaveScore));
       const leaveProb = 1 - Math.exp(-leaveProbPerSecond * dt);
       if (this.rng.next() < leaveProb) {
@@ -364,9 +391,19 @@ class Simulation {
         agent.timeAtCurrentSpot = 0;
         agent.hasCaughtHere = false;
         agent.hasHole = false;
+        agent.hole = null;
         this.pickDestination(agent);
       }
     }
+  }
+  spawnCatchEffects(agent) {
+    this.catchEffects.push({
+      x: agent.x,
+      y: agent.y,
+      timer: 0,
+      duration: 1.6,
+      isPlayer: agent.isPlayer,
+    });
   }
   notifyNeighborCatch(catchingAgent) {
     const player = this.player;
@@ -425,6 +462,29 @@ class Simulation {
       agent.lastMoveDirectionAngle = best.angle;
     }
   }
+  isHoleLocationValid(x, y) {
+    const minDist = PARAMS.minHoleSpacing;
+    const minDist2 = minDist * minDist;
+    const checkAgainst = [...this.holes, ...this.reservations];
+    return checkAgainst.every((spot) => {
+      const dx = spot.x - x;
+      const dy = spot.y - y;
+      return dx * dx + dy * dy >= minDist2;
+    });
+  }
+  reserveHole(agent) {
+    this.releaseReservation(agent);
+    const reservation = { x: agent.x, y: agent.y, owner: agent.id };
+    agent.reservedSpot = reservation;
+    this.reservations.push(reservation);
+  }
+  releaseReservation(agent) {
+    if (!agent.reservedSpot) return;
+    this.reservations = this.reservations.filter(
+      (spot) => spot !== agent.reservedSpot
+    );
+    agent.reservedSpot = null;
+  }
   pushGutEvent(text, type) {
     const timestamp = Math.floor(this.simTime);
     this.gutEvents.unshift({ text, type, timestamp });
@@ -436,7 +496,6 @@ class Simulation {
 
 const uiState = {
   showGut: false,
-  showDebug: false,
 };
 
 const config = {
@@ -457,8 +516,10 @@ const game = new Phaser.Game(config);
 let sim;
 let graphics;
 let lastFrameTime = 0;
+let lastDt = 0;
 let rng;
 let crackLines = [];
+let statusTimeout;
 
 function preload() {}
 
@@ -482,6 +543,7 @@ function update(time) {
   const rawDt = (time - lastFrameTime) / 1000;
   lastFrameTime = time;
   const dt = Math.min(rawDt, 0.05) * PARAMS.simSpeed;
+  lastDt = dt;
   sim.update(dt);
   renderScene(time / 1000);
   updateHUD();
@@ -492,7 +554,7 @@ function renderScene(time) {
   drawLakeBackground();
   drawHoles();
   drawAgents(time);
-  drawDebugDots();
+  drawCatchEffects();
 }
 
 function drawLakeBackground() {
@@ -525,9 +587,9 @@ function drawLakeBackground() {
 function drawHoles() {
   sim.holes.forEach((hole) => {
     graphics.fillStyle(0x0b1420, 1);
-    graphics.fillCircle(hole.x, hole.y, 6);
+    graphics.fillCircle(hole.x, hole.y, PARAMS.holeRadius);
     graphics.lineStyle(2, 0x6aaed6, 0.6);
-    graphics.strokeCircle(hole.x, hole.y, 8);
+    graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRadius + 2);
   });
 }
 
@@ -551,14 +613,6 @@ function drawAgents(time) {
     if (agent.state === STATE.FISHING) {
       drawFishingLine(agent, time);
     }
-  });
-}
-
-function drawDebugDots() {
-  if (!uiState.showDebug) return;
-  sim.agents.forEach((agent) => {
-    graphics.fillStyle(agent.isPlayer ? 0xff00ff : 0x00ffea, 0.8);
-    graphics.fillCircle(agent.x, agent.y, agent.isPlayer ? 10 : 8);
   });
 }
 
@@ -593,6 +647,36 @@ function drawFishingLine(agent, time) {
   graphics.fillCircle(agent.x, agent.y + 18 + bobOffset, 2.5);
 }
 
+function drawCatchEffects() {
+  sim.catchEffects = sim.catchEffects.filter((effect) => effect.timer < effect.duration);
+  sim.catchEffects.forEach((effect) => {
+    effect.timer += lastDt || 0;
+    const progress = effect.timer / effect.duration;
+    const radius = PARAMS.holeRadius + progress * 18;
+    const alpha = 0.9 * (1 - progress);
+    graphics.lineStyle(2, 0xaaf5ff, alpha);
+    graphics.strokeCircle(effect.x, effect.y, radius);
+    const textY = effect.y - 20 - progress * 20;
+    graphics.lineStyle(2, 0xfff3a1, alpha);
+    graphics.beginPath();
+    graphics.moveTo(effect.x - 6, textY);
+    graphics.lineTo(effect.x - 2, textY);
+    graphics.strokePath();
+    graphics.beginPath();
+    graphics.moveTo(effect.x + 2, textY - 4);
+    graphics.lineTo(effect.x + 2, textY + 4);
+    graphics.strokePath();
+    graphics.beginPath();
+    graphics.moveTo(effect.x - 2, textY);
+    graphics.lineTo(effect.x + 6, textY);
+    graphics.strokePath();
+    if (effect.isPlayer) {
+      graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
+      graphics.strokeCircle(effect.x, effect.y, radius + 10);
+    }
+  });
+}
+
 function setupUI() {
   UI.timer = document.getElementById("timer");
   UI.catches = document.getElementById("player-catches");
@@ -603,12 +687,19 @@ function setupUI() {
   UI.gutAnchor = document.getElementById("gut-anchor");
   UI.gutCrowd = document.getElementById("gut-crowd");
   UI.gutEvents = document.getElementById("gut-events");
+  UI.status = document.getElementById("status-message");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
     const player = sim.player;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
+    if (!sim.isHoleLocationValid(player.x, player.y)) {
+      showStatus("Too close to another hole (ice stability). Move further away.");
+      return;
+    }
+    sim.reserveHole(player);
     player.state = STATE.DRILLING;
     player.drillTimer = PARAMS.drillTime;
+    player.timeAtCurrentSpot = 0;
   });
 
   document.getElementById("fish-btn").addEventListener("click", () => {
@@ -626,6 +717,7 @@ function setupUI() {
     if (player.state === STATE.DRILLING) {
       player.state = STATE.IDLE;
       player.drillTimer = 0;
+      sim.releaseReservation(player);
       return;
     }
     if (player.state === STATE.FISHING) {
@@ -645,10 +737,6 @@ function setupUI() {
     uiState.showGut = event.target.checked;
     UI.gutPanel.classList.toggle("hidden", !uiState.showGut);
   });
-
-  document.getElementById("show-debug").addEventListener("change", (event) => {
-    uiState.showDebug = event.target.checked;
-  });
 }
 
 function resetSimulation() {
@@ -666,13 +754,17 @@ function resetSimulation() {
       y2: y1 + Math.sin(angle) * length,
     };
   });
-  const npcPositions = sim.agents.filter((agent) => !agent.isPlayer);
-  console.info("Player start:", { x: sim.player.x, y: sim.player.y });
-  console.info(
-    "NPC starts:",
-    npcPositions.map((agent) => ({ id: agent.id, x: agent.x, y: agent.y }))
-  );
   lastFrameTime = 0;
+}
+
+function showStatus(message) {
+  if (!UI.status) return;
+  UI.status.textContent = message;
+  UI.status.classList.remove("hidden");
+  clearTimeout(statusTimeout);
+  statusTimeout = setTimeout(() => {
+    UI.status.classList.add("hidden");
+  }, 3000);
 }
 
 function updateHUD() {

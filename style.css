@@ -109,6 +109,14 @@ input[type="range"] {
   color: var(--muted);
 }
 
+.status {
+  font-size: 12px;
+  color: #ffe08a;
+  background: rgba(20, 30, 50, 0.8);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
 .hidden {
   display: none;
 }
