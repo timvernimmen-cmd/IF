@@ -286,6 +286,7 @@ class Simulation {
     this.holes = [];
     this.reservations = [];
     this.catchEffects = [];
+    this.successEvents = [];
     this.player = null;
     this.simTime = 0;
     this.gutEvents = [];
@@ -409,6 +410,7 @@ class Simulation {
       agent.recentSuccessTimer = PARAMS.successWindow;
       this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
       this.spawnCatchEffects(agent);
+      this.recordSuccessEvent(agent);
       if (agent.isPlayer) {
         this.pushGutEvent("You caught a fish (pressure reset).", "success");
       } else {
@@ -460,83 +462,20 @@ class Simulation {
       x: agent.x,
       y: agent.y,
       timer: 0,
-      duration: 1.6,
+      duration: 1.8,
       isPlayer: agent.isPlayer,
     });
-    this.spawnFishIcon(agent);
   }
-  spawnFishIcon(agent) {
-    const scene = this.scene;
-    const size = agent.isPlayer ? 13 : 11;
-    const bodyColor = agent.isPlayer ? 0xe6f2ff : 0xc8d7e6;
-    const outlineColor = agent.isPlayer ? 0x9fb4c7 : 0x7f93a6;
-    const fish = scene.add.container(agent.x, agent.y - 18);
-    const body = scene.add.ellipse(0, 0, size * 1.6, size, bodyColor, 0.95);
-    body.setStrokeStyle(1, outlineColor, 0.8);
-    const tailTop = scene.add.triangle(
-      -size * 1.1,
-      -size * 0.1,
-      0,
-      0,
-      -size * 0.8,
-      -size * 0.6,
-      -size * 1.4,
-      -size * 0.2,
-      bodyColor,
-      0.95
-    );
-    const tailBottom = scene.add.triangle(
-      -size * 1.1,
-      size * 0.1,
-      0,
-      0,
-      -size * 0.8,
-      size * 0.6,
-      -size * 1.4,
-      size * 0.2,
-      bodyColor,
-      0.95
-    );
-    const dorsal = scene.add.triangle(
-      -size * 0.1,
-      -size * 0.6,
-      0,
-      0,
-      size * 0.2,
-      -size * 0.6,
-      -size * 0.1,
-      -size * 1.0,
-      bodyColor,
-      0.9
-    );
-    const eye = scene.add.circle(size * 0.45, -size * 0.2, 1.5, 0x2a3b4a, 0.9);
-    const gill = scene.add.line(
-      size * 0.2,
-      0,
-      0,
-      -size * 0.3,
-      0,
-      size * 0.3,
-      outlineColor,
-      0.7
-    );
-    fish.add([body, tailTop, tailBottom, dorsal, eye, gill]);
-    scene.tweens.add({
-      targets: fish,
-      y: fish.y - 30,
-      alpha: 0,
-      duration: 3400,
-      ease: "Sine.easeOut",
-      onComplete: () => fish.destroy(),
+  recordSuccessEvent(agent) {
+    this.successEvents.unshift({
+      x: agent.x,
+      y: agent.y,
+      time: this.simTime,
+      agentId: agent.id,
     });
-    scene.tweens.add({
-      targets: fish,
-      rotation: 0.18,
-      duration: 400,
-      yoyo: true,
-      repeat: 7,
-      ease: "Sine.easeInOut",
-    });
+    if (this.successEvents.length > 50) {
+      this.successEvents.pop();
+    }
   }
   notifyNeighborCatch(catchingAgent) {
     const player = this.player;
@@ -564,6 +503,7 @@ class Simulation {
     const nearbyRecentSuccessCount = this.countNearbyRecentSuccesses(agent);
     const densityFactor = Math.min(1, localDensity / 6);
     const successBoost = Math.min(3, nearbyRecentSuccessCount);
+    const socialTarget = this.getSocialTarget(agent);
     let distanceMean;
     let turnRange;
     if (mode === MODE.SUCCESS_LOOP) {
@@ -600,6 +540,14 @@ class Simulation {
       const socialScore = Math.min(1, neighborCount / 8);
       const explorationScore = this.rng.next();
       const inertiaScore = Math.cos(angle - agent.lastMoveDirectionAngle) * 0.5 + 0.5;
+      let successAttraction = 0;
+      if (mode === MODE.FAILURE_LINE && socialTarget) {
+        const dxs = socialTarget.x - x;
+        const dys = socialTarget.y - y;
+        const dist = Math.hypot(dxs, dys);
+        successAttraction = Math.max(0, 1 - dist / socialTarget.radius);
+        successAttraction *= socialTarget.weight;
+      }
       const conditionalMultiplier =
         mode === MODE.SUCCESS_LOOP
           ? 1 / PARAMS.socialMultiplier
@@ -607,7 +555,8 @@ class Simulation {
       const score =
         PARAMS.socialStrength * socialScore * conditionalMultiplier +
         PARAMS.explorationWeight * explorationScore +
-        PARAMS.inertiaWeight * inertiaScore;
+        PARAMS.inertiaWeight * inertiaScore +
+        successAttraction;
       if (!Number.isFinite(score)) {
         continue;
       }
@@ -677,6 +626,36 @@ class Simulation {
     return agent.timeSinceLastCatch < PARAMS.successWindow
       ? MODE.SUCCESS_LOOP
       : MODE.FAILURE_LINE;
+  }
+  getSocialTarget(agent) {
+    if (agent.timeSinceLastCatch < PARAMS.successWindow) {
+      return null;
+    }
+    const radius = 260;
+    const now = this.simTime;
+    let totalWeight = 0;
+    let sumX = 0;
+    let sumY = 0;
+    this.successEvents.forEach((event) => {
+      if (now - event.time > PARAMS.socialWindow) return;
+      const dx = event.x - agent.x;
+      const dy = event.y - agent.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > radius) return;
+      const recency = Math.exp(-(now - event.time) / PARAMS.socialWindow);
+      const proximity = 1 - dist / radius;
+      const weight = recency * proximity;
+      totalWeight += weight;
+      sumX += event.x * weight;
+      sumY += event.y * weight;
+    });
+    if (totalWeight <= 0) return null;
+    return {
+      x: sumX / totalWeight,
+      y: sumY / totalWeight,
+      weight: Math.min(1.5, totalWeight),
+      radius,
+    };
   }
 }
 
@@ -863,13 +842,16 @@ function drawCatchEffects() {
   sim.catchEffects.forEach((effect) => {
     effect.timer += lastDt || 0;
     const progress = effect.timer / effect.duration;
-    const radius = PARAMS.holeRadius + progress * 18;
-    const alpha = 0.9 * (1 - progress);
-    graphics.lineStyle(2, 0xaaf5ff, alpha);
-    graphics.strokeCircle(effect.x, effect.y, radius);
+    const alpha = 0.85 * (1 - progress);
+    const baseRadius = PARAMS.holeRadius + 4;
+    for (let i = 0; i < 3; i += 1) {
+      const ringRadius = baseRadius + progress * (16 + i * 6);
+      graphics.lineStyle(2, 0xaaf5ff, alpha * (1 - i * 0.2));
+      graphics.strokeCircle(effect.x, effect.y, ringRadius);
+    }
     if (effect.isPlayer) {
       graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
-      graphics.strokeCircle(effect.x, effect.y, radius + 10);
+      graphics.strokeCircle(effect.x, effect.y, baseRadius + progress * 28);
     }
   });
 }
@@ -1037,6 +1019,7 @@ function updateGutPanel() {
   const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
   const mode = sim.getMovementMode(player);
+  const socialTarget = sim.getSocialTarget(player);
   UI.gutPressure.textContent = pressure.toFixed(2);
   UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
   UI.gutAnchor.textContent = player.hasCaughtHere ? "ON" : "OFF";
@@ -1062,6 +1045,10 @@ function updateGutPanel() {
   successLine.textContent = `Nearby recent successes: ${nearbyRecentSuccessCount} (window ${Math.round(
     PARAMS.socialWindow / 60
   )} min)`;
+  const socialTargetLine = document.createElement("div");
+  socialTargetLine.textContent = `Social target: ${
+    socialTarget ? `${Math.round(socialTarget.x)}, ${Math.round(socialTarget.y)}` : "none"
+  }`;
   const breakdown = document.createElement("div");
   breakdown.textContent = `Pressure = sigmoid(${timeTerm.toFixed(2)} - ${anchorBonus.toFixed(
     2
@@ -1071,6 +1058,7 @@ function updateGutPanel() {
   UI.gutEvents.appendChild(modeLine);
   UI.gutEvents.appendChild(densityLine);
   UI.gutEvents.appendChild(successLine);
+  UI.gutEvents.appendChild(socialTargetLine);
   UI.gutEvents.appendChild(breakdown);
   UI.gutEvents.appendChild(detail);
 }
