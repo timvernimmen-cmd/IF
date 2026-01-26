@@ -490,6 +490,7 @@ class Simulation {
     this.holes = [];
     this.reservations = [];
     this.catchEffects = [];
+    this.catchPopups = [];
     this.successEvents = [];
     this.globalSuccessSignal = null;
     this.player = null;
@@ -746,8 +747,24 @@ class Simulation {
       x: agent.x,
       y: agent.y,
       timer: 0,
-      duration: 1.8,
+      duration: 1.0,
       isPlayer: agent.isPlayer,
+    });
+    this.catchPopups.push({
+      x: agent.x + 8,
+      y: agent.y - 14,
+      timer: 0,
+      duration: 0.9,
+      text: "Fish!",
+      textObj: this.scene.add
+        .text(agent.x + 8, agent.y - 14, "Fish!", {
+          fontSize: "12px",
+          color: "#f7fbff",
+          fontStyle: "bold",
+          stroke: "#1a2d45",
+          strokeThickness: 3,
+        })
+        .setDepth(30),
     });
   }
   recordSuccessEvent(agent) {
@@ -1229,6 +1246,7 @@ function renderScene(time) {
   drawClickMarkers();
   drawAgents(time);
   drawCatchEffects();
+  drawCatchPopups();
 }
 
 function drawLakeBackground() {
@@ -1351,7 +1369,7 @@ function drawCatchEffects() {
     effect.timer += lastDt || 0;
     const progress = effect.timer / effect.duration;
     const alpha = 0.85 * (1 - progress);
-  const baseRadius = PARAMS.holeRingRadius;
+    const baseRadius = PARAMS.holeRingRadius;
     for (let i = 0; i < 3; i += 1) {
       const ringRadius = baseRadius + progress * (8 + i * 4);
       graphics.lineStyle(2, 0xaaf5ff, alpha * (1 - i * 0.2));
@@ -1361,6 +1379,24 @@ function drawCatchEffects() {
       graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
       graphics.strokeCircle(effect.x, effect.y, baseRadius + progress * 12);
     }
+  });
+}
+
+function drawCatchPopups() {
+  sim.catchPopups = sim.catchPopups.filter((popup) => {
+    popup.timer += lastDt || 0;
+    if (popup.timer >= popup.duration) {
+      popup.textObj?.destroy();
+      return false;
+    }
+    const progress = popup.timer / popup.duration;
+    const alpha = 1 - progress;
+    const y = popup.y - progress * 12;
+    if (popup.textObj) {
+      popup.textObj.setPosition(popup.x, y);
+      popup.textObj.setAlpha(alpha);
+    }
+    return true;
   });
 }
 
