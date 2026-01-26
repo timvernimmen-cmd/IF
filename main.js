@@ -558,6 +558,7 @@ let sim;
 let graphics;
 let lastFrameTime = 0;
 let lastDt = 0;
+let lastLogTime = 0;
 let rng;
 let crackLines = [];
 let statusTimeout;
@@ -569,6 +570,7 @@ function create() {
   resetSimulation();
   setupUI();
   this.input.on("pointerdown", (pointer) => {
+    console.log("canvas pointerdown", pointer.x, pointer.y);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.DRILLING || player.state === STATE.FISHING) {
@@ -584,14 +586,41 @@ function create() {
 
 function update(time) {
   if (!sim) return;
-  if (!lastFrameTime) lastFrameTime = time;
-  const rawDt = (time - lastFrameTime) / 1000;
-  lastFrameTime = time;
-  const dt = Math.min(rawDt, 0.05) * PARAMS.timeScale * PARAMS.simSpeed;
-  lastDt = dt;
-  sim.update(dt);
-  renderScene(time / 1000);
-  updateHUD();
+  try {
+    if (!lastFrameTime) {
+      lastFrameTime = time;
+      return;
+    }
+    let rawDt = (time - lastFrameTime) / 1000;
+    lastFrameTime = time;
+    if (!Number.isFinite(rawDt) || rawDt <= 0) {
+      return;
+    }
+    rawDt = Math.min(rawDt, 0.05);
+    let dtSim = rawDt * PARAMS.timeScale * PARAMS.simSpeed;
+    if (!Number.isFinite(dtSim)) {
+      dtSim = 0;
+      showErrorBanner("Non-finite dtSim. Check timeScale/simSpeed.");
+    }
+    lastDt = dtSim;
+    sim.update(dtSim);
+    renderScene(time / 1000);
+    updateHUD();
+    if (time - lastLogTime >= 1000) {
+      lastLogTime = time;
+      console.log("tick", {
+        rawDt,
+        dtSim,
+        timeScale: PARAMS.timeScale,
+        simSpeed: PARAMS.simSpeed,
+        simTime: sim.simTime,
+      });
+    }
+  } catch (err) {
+    console.error("Update crashed", err);
+    const message = err?.message ? String(err.message).split("\n")[0] : "Unknown error";
+    showErrorBanner(message);
+  }
 }
 
 function renderScene(time) {
@@ -746,8 +775,10 @@ function setupUI() {
   UI.gutCrowd = document.getElementById("gut-crowd");
   UI.gutEvents = document.getElementById("gut-events");
   UI.status = document.getElementById("status-message");
+  UI.errorBanner = document.getElementById("error-banner");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
+    console.log("drill clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
@@ -762,6 +793,7 @@ function setupUI() {
   });
 
   document.getElementById("fish-btn").addEventListener("click", () => {
+    console.log("fish clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.FISHING) return;
@@ -773,6 +805,7 @@ function setupUI() {
   });
 
   document.getElementById("stop-btn").addEventListener("click", () => {
+    console.log("stop clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.DRILLING) {
@@ -805,6 +838,9 @@ function resetSimulation() {
   rng = new RNG(PARAMS.seed);
   sim = new Simulation(game.scene.scenes[0], rng);
   window.sim = sim;
+  if (UI.errorBanner) {
+    UI.errorBanner.classList.add("hidden");
+  }
   crackLines = Array.from({ length: 35 }, () => {
     const x1 = rng.range(40, PARAMS.width - 40);
     const y1 = rng.range(40, PARAMS.height - 40);
@@ -832,6 +868,12 @@ function showStatus(message) {
   statusTimeout = setTimeout(() => {
     UI.status.classList.add("hidden");
   }, 3000);
+}
+
+function showErrorBanner(message) {
+  if (!UI.errorBanner) return;
+  UI.errorBanner.textContent = message;
+  UI.errorBanner.classList.remove("hidden");
 }
 
 function updateHUD() {
