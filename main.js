@@ -37,7 +37,7 @@ const PARAMS = {
   maxMoveDistance: 220,
   minMoveDistance: 40,
   candidateCount: 30,
-  simSpeed: 1,
+  matchSpeed: 1,
   timeScale: 18,
   socialWindow: 420,
   socialCueWeight: 0.2,
@@ -232,6 +232,7 @@ const MODE = {
 };
 
 const UI = {};
+const REAL_MATCH_SECONDS = 3 * 60 * 60;
 
 class RNG {
   constructor(seedString) {
@@ -527,14 +528,11 @@ class Simulation {
       agent.lastMoveDirectionAngle = angle;
       if (agent.isPlayer) {
         this.player = agent;
-        agent.state = STATE.DRILLING;
-        agent.drillTimer = PARAMS.drillTime;
-        agent.timeAtCurrentSpot = 0;
-        this.reserveHole(agent);
-      } else {
-        agent.destination = { x, y };
-        agent.state = STATE.WALKING;
       }
+      agent.state = STATE.DRILLING;
+      agent.drillTimer = PARAMS.drillTime;
+      agent.timeAtCurrentSpot = 0;
+      this.reserveHole(agent);
       this.agents.push(agent);
     }
   }
@@ -586,16 +584,19 @@ class Simulation {
     if (dist < 2) {
       agent.x = agent.destination.x;
       agent.y = agent.destination.y;
-      if (agent.intentAfterArrival === "DRILL_THEN_FISH") {
-        this.reserveHole(agent);
-        agent.state = STATE.DRILLING;
-        agent.drillTimer = PARAMS.drillTime;
-        agent.timeAtCurrentSpot = 0;
-      } else if (agent.isPlayer) {
-        agent.state = STATE.IDLE;
-      } else {
-        this.pickDestination(agent);
+      if (!this.isHoleLocationValid(agent.x, agent.y)) {
+        if (!agent.isPlayer) {
+          this.pickDestination(agent);
+        } else {
+          showStatus("Too close to a hole or shore. Click a different spot.");
+          agent.state = STATE.IDLE;
+        }
+        return;
       }
+      this.reserveHole(agent);
+      agent.state = STATE.DRILLING;
+      agent.drillTimer = PARAMS.drillTime;
+      agent.timeAtCurrentSpot = 0;
       return;
     }
     const step = Math.min(dist, agent.speed * dt);
@@ -633,7 +634,7 @@ class Simulation {
     agent.drillTimer = Math.max(0, agent.drillTimer - dt);
     if (agent.drillTimer <= 0) {
       this.releaseReservation(agent);
-      agent.state = agent.isPlayer ? STATE.READY : STATE.FISHING;
+      agent.state = STATE.FISHING;
       agent.hasHole = true;
       agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
       this.holes.push(agent.hole);
@@ -1127,56 +1128,27 @@ function create() {
   resetSimulation();
   setupUI();
   this.input.on("pointerdown", (pointer) => {
+    console.log("PHASER_POINTERDOWN");
     const player = getPlayer();
     if (!player || !sim) {
       console.log("CLICK_IGNORED", "sim-not-ready");
       return;
     }
-    const eventTarget = pointer.event?.target;
-    const clientX = pointer.event?.clientX ?? 0;
-    const clientY = pointer.event?.clientY ?? 0;
-    const elementAtPoint = pointer.event ? document.elementFromPoint(clientX, clientY) : null;
-    if (eventTarget?.closest?.("#hudColumn") || elementAtPoint?.closest?.("#hudColumn")) {
-      console.log("CLICK_IGNORED", "hud-hit");
-      return;
-    }
-    const hudColumn = document.getElementById("hudColumn");
-    if (hudColumn) {
-      const rect = hudColumn.getBoundingClientRect();
-      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-        console.log("CLICK_IGNORED", "in-gutter");
+    handleMapClick(pointer.x, pointer.y, pointer.event);
+  });
+  const canvas = this.game.canvas;
+  if (canvas) {
+    canvas.addEventListener("pointerdown", (event) => {
+      if (!sim) {
+        console.log("CLICK_IGNORED", "sim-not-ready");
         return;
       }
-    }
-    if (!isInsideLake(pointer.x, pointer.y)) {
-      console.log("CLICK_IGNORED", "outside-lake");
-      return;
-    }
-    if (distanceToLakeEdge(pointer.x, pointer.y) < PARAMS.minShoreDist) {
-      console.log("CLICK_IGNORED", "too-close-to-shore");
-      return;
-    }
-    if (sim.isPointTooCloseToHole(pointer.x, pointer.y)) {
-      console.log("CLICK_IGNORED", "too-close-to-hole");
-      return;
-    }
-    const snapped = sim.clampDestination(pointer.x, pointer.y);
-    if (player.state === STATE.DRILLING) {
-      sim.releaseReservation(player);
-      player.drillTimer = 0;
-    }
-    if (player.state === STATE.FISHING) {
-      player.hasHole = false;
-      player.hasCaughtHere = false;
-      player.timeAtCurrentSpot = 0;
-    }
-    player.destination = { x: snapped.x, y: snapped.y };
-    player.state = STATE.WALKING;
-    player.intentAfterArrival = "DRILL_THEN_FISH";
-    player.moveCount += 1;
-    clickMarkers.push({ x: snapped.x, y: snapped.y, timer: 0, duration: 0.5 });
-    console.log("MAP_CLICK", { x: snapped.x, y: snapped.y });
-  });
+      const rect = canvas.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) * PARAMS.width) / rect.width;
+      const y = ((event.clientY - rect.top) * PARAMS.height) / rect.height;
+      handleMapClick(x, y, event);
+    });
+  }
 }
 
 function update(time) {
@@ -1192,10 +1164,12 @@ function update(time) {
       return;
     }
     rawDt = Math.min(rawDt, 0.05);
-    let dtSim = rawDt * PARAMS.timeScale * PARAMS.simSpeed;
+    const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+    const compression = REAL_MATCH_SECONDS / targetGameSeconds;
+    let dtSim = rawDt * compression;
     if (!Number.isFinite(dtSim)) {
       dtSim = 0;
-      showErrorBanner("Non-finite dtSim. Check timeScale/simSpeed.");
+      showErrorBanner("Non-finite dtSim. Check match duration.");
     }
     lastDt = dtSim;
     sim.update(dtSim);
@@ -1390,10 +1364,11 @@ function setupUI() {
   const simSpeed = document.getElementById("sim-speed");
   const simSpeedValue = document.getElementById("sim-speed-value");
   simSpeed.addEventListener("input", () => {
-    PARAMS.simSpeed = parseFloat(simSpeed.value);
-    simSpeedValue.textContent = `${PARAMS.simSpeed.toFixed(1)}x`;
+    PARAMS.matchSpeed = parseFloat(simSpeed.value);
+    updateMatchSpeedLabel(simSpeedValue);
   });
-  UI.timeScaleLabel.textContent = "(3h compressed to 10m)";
+  updateMatchSpeedLabel(simSpeedValue);
+  UI.timeScaleLabel.textContent = "(3h match)";
 
   const panel = document.getElementById("ui-panel");
   const stopEvents = (event) => {
@@ -1483,6 +1458,72 @@ function showErrorBanner(message) {
   if (!UI.errorBanner) return;
   UI.errorBanner.textContent = message;
   UI.errorBanner.classList.remove("hidden");
+}
+
+function formatDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+function updateMatchSpeedLabel(label) {
+  if (!label) return;
+  const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+  const compression = REAL_MATCH_SECONDS / targetGameSeconds;
+  const labelText = `3h → ${formatDuration(targetGameSeconds)} (x${Math.round(compression)})`;
+  label.textContent = labelText;
+}
+
+function handleMapClick(x, y, domEvent) {
+  const player = getPlayer();
+  if (!player || !sim) {
+    console.log("CLICK_IGNORED", "sim-not-ready");
+    return;
+  }
+  const eventTarget = domEvent?.target;
+  const clientX = domEvent?.clientX ?? 0;
+  const clientY = domEvent?.clientY ?? 0;
+  const elementAtPoint = domEvent ? document.elementFromPoint(clientX, clientY) : null;
+  if (eventTarget?.closest?.("#hudColumn") || elementAtPoint?.closest?.("#hudColumn")) {
+    console.log("CLICK_IGNORED", "hud-hit");
+    return;
+  }
+  const hudColumn = document.getElementById("hudColumn");
+  if (hudColumn) {
+    const rect = hudColumn.getBoundingClientRect();
+    if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+      console.log("CLICK_IGNORED", "in-gutter");
+      return;
+    }
+  }
+  if (!isInsideLake(x, y)) {
+    console.log("CLICK_IGNORED", "outside-lake");
+    return;
+  }
+  if (distanceToLakeEdge(x, y) < PARAMS.minShoreDist) {
+    console.log("CLICK_IGNORED", "too-close-to-shore");
+    return;
+  }
+  if (sim.isPointTooCloseToHole(x, y)) {
+    console.log("CLICK_IGNORED", "too-close-to-hole");
+    return;
+  }
+  const snapped = sim.clampDestination(x, y);
+  if (player.state === STATE.DRILLING) {
+    sim.releaseReservation(player);
+    player.drillTimer = 0;
+  }
+  if (player.state === STATE.FISHING) {
+    player.hasHole = false;
+    player.hasCaughtHere = false;
+    player.timeAtCurrentSpot = 0;
+  }
+  player.destination = { x: snapped.x, y: snapped.y };
+  player.state = STATE.WALKING;
+  player.intentAfterArrival = "DRILL_THEN_FISH";
+  player.moveCount += 1;
+  clickMarkers.push({ x: snapped.x, y: snapped.y, timer: 0, duration: 0.5 });
+  console.log("MAP_CLICK", { x: snapped.x, y: snapped.y });
 }
 
 function pushToast(text, type = "info") {
