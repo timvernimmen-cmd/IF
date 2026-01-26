@@ -15,6 +15,9 @@ const PARAMS = {
   minShoreDist: 24,
   lakeSafeInset: 8,
   minDwell: 20,
+  minSpawnDist: 26,
+  repulseRadius: 18,
+  repulseStrength: 0.6,
   targetDwell: 35,
   leaveCheckInterval: 10,
   fishGridCols: 80,
@@ -64,8 +67,6 @@ const EDGE_PREF = 80;
 const EDGE_WEIGHT = 0.6;
 const MIN_HOLE_SHORE_DIST = 25;
 const EDGE_MISTAKE_PROB = 0.04;
-
-let shoreDecor = [];
 
 function isInsideWorld(x, y) {
   const world = worldRect();
@@ -492,22 +493,36 @@ class Simulation {
     this.gutEvents = [];
     this.initializeAgents();
   }
+  findSpawnPoint(existingAgents) {
+    const world = worldRect();
+    let minDist = PARAMS.minSpawnDist;
+    const maxAttempts = 500;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (attempt > 0 && attempt % 120 === 0) {
+        minDist = Math.max(12, minDist - 2);
+      }
+      const x = this.rng.range(world.x + 10, world.x + world.w - 10);
+      const y = this.rng.range(world.y + 10, world.y + world.h - 10);
+      if (!isInsideLake(x, y)) {
+        continue;
+      }
+      if (distanceToLakeEdge(x, y) < PARAMS.minShoreDist) {
+        continue;
+      }
+      const tooClose = existingAgents.some((agent) => {
+        const dx = agent.x - x;
+        const dy = agent.y - y;
+        return dx * dx + dy * dy < minDist * minDist;
+      });
+      if (tooClose) continue;
+      return { x, y };
+    }
+    return this.randomPointInsideLake();
+  }
   initializeAgents() {
-    const centerX = PARAMS.width * 0.5;
-    const centerY = PARAMS.height * 0.5;
     for (let i = 0; i < PARAMS.npcCount + 1; i += 1) {
+      const { x, y } = this.findSpawnPoint(this.agents);
       const angle = this.rng.range(0, Math.PI * 2);
-      const radius = this.rng.range(60, 180);
-      const x = Phaser.Math.Clamp(
-        centerX + Math.cos(angle) * radius,
-        PARAMS.mapMargin,
-        PARAMS.width - PARAMS.mapMargin
-      );
-      const y = Phaser.Math.Clamp(
-        centerY + Math.sin(angle) * radius,
-        PARAMS.mapMargin,
-        PARAMS.height - PARAMS.mapMargin
-      );
       const agent = new Agent(i, x, y, i === 0);
       agent.lastMoveDirectionAngle = angle;
       if (agent.isPlayer) {
@@ -535,6 +550,7 @@ class Simulation {
     this.updateSpatialHash();
     this.fishField.recover(dt);
     this.agents.forEach((agent) => this.updateAgent(agent, dt));
+    this.applyRepulsion(dt);
   }
   updateAgent(agent, dt) {
     agent.timeSinceLastCatch += dt;
@@ -925,6 +941,40 @@ class Simulation {
     );
   }
 
+  applyRepulsion(dt) {
+    const radius = PARAMS.repulseRadius;
+    const strength = PARAMS.repulseStrength;
+    for (let i = 0; i < this.agents.length; i += 1) {
+      for (let j = i + 1; j < this.agents.length; j += 1) {
+        const a = this.agents[i];
+        const b = this.agents[j];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist === 0 || dist >= radius) continue;
+        const push = ((radius - dist) / radius) * strength * dt;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        a.x += nx * push;
+        a.y += ny * push;
+        b.x -= nx * push;
+        b.y -= ny * push;
+      }
+    }
+    this.agents.forEach((agent) => {
+      if (!isInsideLake(agent.x, agent.y)) {
+        const projected = projectInsideLake(agent.x, agent.y, PARAMS.lakeSafeInset);
+        agent.x = projected.x;
+        agent.y = projected.y;
+      }
+      if (this.isPointTooCloseToHole(agent.x, agent.y)) {
+        const snapped = this.snapTargetOutsideHoles(agent.x, agent.y);
+        agent.x = snapped.x;
+        agent.y = snapped.y;
+      }
+    });
+  }
+
   findHoleAdjustedStep(agent, baseAngle, step) {
     const offsets = [0, 10, -10, 20, -20, 30, -30, 40, -40];
     for (const offset of offsets) {
@@ -1150,9 +1200,24 @@ function renderScene(time) {
 
 function drawLakeBackground() {
   const world = worldRect();
-  graphics.fillStyle(0x0f1724, 1);
+  const snowBase = 0xe9f4ff;
+  graphics.fillStyle(snowBase, 1);
   graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
-  drawShoreDecor();
+  graphics.fillRect(world.x, world.y, world.w, world.h);
+  graphics.fillStyle(0xcfd9e6, 0.35);
+  graphics.fillRect(world.x, world.y, world.w, world.h);
+  for (let i = 0; i < 5; i += 1) {
+    const inset = i * 10;
+    const alpha = 0.08;
+    graphics.fillStyle(snowBase, alpha);
+    graphics.fillRoundedRect(
+      world.x + inset,
+      world.y + inset,
+      world.w - inset * 2,
+      world.h - inset * 2,
+      26
+    );
+  }
   if (lakePolygon.length > 2) {
     graphics.fillStyle(0x18324b, 1);
     graphics.beginPath();
@@ -1177,49 +1242,16 @@ function drawLakeBackground() {
     );
   }
   crackLines.forEach((line) => {
-    graphics.lineStyle(1, 0x335f84, 0.35);
-    graphics.beginPath();
-    graphics.moveTo(line.x1, line.y1);
-    graphics.lineTo(line.x2, line.y2);
-    graphics.strokePath();
+    if (isInsideLake(line.x1, line.y1) && isInsideLake(line.x2, line.y2)) {
+      graphics.lineStyle(1, 0x335f84, 0.35);
+      graphics.beginPath();
+      graphics.moveTo(line.x1, line.y1);
+      graphics.lineTo(line.x2, line.y2);
+      graphics.strokePath();
+    }
   });
   graphics.lineStyle(4, 0x79b4d6, 0.6);
   graphics.strokeRoundedRect(10, 10, PARAMS.width - 20, PARAMS.height - 20, 26);
-}
-
-function drawShoreDecor() {
-  shoreDecor.forEach((item) => {
-    if (item.type === "reeds") {
-      graphics.lineStyle(1, 0x6b7c6b, 0.8);
-      for (let i = 0; i < 4; i += 1) {
-        const angle = -Math.PI / 2 + item.reedAngles[i];
-        const length = item.reedLengths[i];
-        graphics.beginPath();
-        graphics.moveTo(item.x, item.y);
-        graphics.lineTo(item.x + Math.cos(angle) * length, item.y + Math.sin(angle) * length);
-        graphics.strokePath();
-        graphics.fillStyle(0xe8f2ff, 0.8);
-        graphics.fillCircle(
-          item.x + Math.cos(angle) * length,
-          item.y + Math.sin(angle) * length,
-          1.5
-        );
-      }
-    } else if (item.type === "conifer") {
-      graphics.fillStyle(0x3f4b3f, 0.9);
-      graphics.fillTriangle(item.x, item.y - 12, item.x - 6, item.y, item.x + 6, item.y);
-      graphics.fillTriangle(item.x, item.y - 6, item.x - 7, item.y + 6, item.x + 7, item.y + 6);
-      graphics.fillStyle(0xe8f2ff, 0.7);
-      graphics.fillCircle(item.x - 2, item.y - 10, 2);
-    } else {
-      graphics.fillStyle(0x5a6a5a, 0.9);
-      graphics.fillCircle(item.x - 4, item.y, 5);
-      graphics.fillCircle(item.x + 2, item.y - 3, 4);
-      graphics.fillCircle(item.x + 6, item.y + 2, 4);
-      graphics.fillStyle(0xe8f2ff, 0.7);
-      graphics.fillCircle(item.x, item.y - 4, 3);
-    }
-  });
 }
 
 function drawHoles() {
@@ -1427,6 +1459,7 @@ function setupUI() {
 
 function resetSimulation() {
   rng = new RNG(PARAMS.seed);
+  lakePolygon = generateLakePolygon();
   sim = new Simulation(game.scene.scenes[0], rng);
   window.sim = sim;
   if (UI.errorBanner) {
@@ -1445,8 +1478,6 @@ function resetSimulation() {
       y2: y1 + Math.sin(angle) * length,
     };
   });
-  lakePolygon = generateLakePolygon();
-  shoreDecor = generateShoreDecor();
   lastFrameTime = 0;
 }
 
@@ -1466,45 +1497,6 @@ function generateLakePolygon() {
     points.push({ x, y });
   }
   return points;
-}
-
-function generateShoreDecor() {
-  const decor = [];
-  const stepMin = 25;
-  const stepMax = 45;
-  for (let i = 0; i < lakePolygon.length; i += 1) {
-    const next = (i + 1) % lakePolygon.length;
-    const ax = lakePolygon[i].x;
-    const ay = lakePolygon[i].y;
-    const bx = lakePolygon[next].x;
-    const by = lakePolygon[next].y;
-    const dx = bx - ax;
-    const dy = by - ay;
-    const length = Math.hypot(dx, dy);
-    const steps = Math.max(1, Math.floor(length / rng.range(stepMin, stepMax)));
-    const nx = dy / length;
-    const ny = -dx / length;
-    for (let s = 0; s < steps; s += 1) {
-      const t = s / steps;
-      const px = ax + dx * t;
-      const py = ay + dy * t;
-      const offset = rng.range(8, 22);
-      const decorX = px + nx * offset;
-      const decorY = py + ny * offset;
-      const typeRoll = rng.next();
-      const type = typeRoll < 0.6 ? "bush" : typeRoll < 0.85 ? "reeds" : "conifer";
-      const reedAngles = [];
-      const reedLengths = [];
-      if (type === "reeds") {
-        for (let i = 0; i < 4; i += 1) {
-          reedAngles.push(rng.range(-0.4, 0.4));
-          reedLengths.push(rng.range(10, 16));
-        }
-      }
-      decor.push({ x: decorX, y: decorY, type, reedAngles, reedLengths });
-    }
-  }
-  return decor;
 }
 
 function getPlayer() {
