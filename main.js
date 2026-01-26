@@ -634,10 +634,11 @@ class Simulation {
     agent.drillTimer = Math.max(0, agent.drillTimer - dt);
     if (agent.drillTimer <= 0) {
       this.releaseReservation(agent);
-      agent.state = STATE.FISHING;
       agent.hasHole = true;
       agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
       this.holes.push(agent.hole);
+      agent.state = STATE.FISHING;
+      agent.timeAtCurrentSpot = 0;
       if (!agent.isPlayer) {
         agent.nextDecisionAt = this.simTime + this.rng.range(20, 33);
       }
@@ -1129,6 +1130,7 @@ function create() {
   setupUI();
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
+    console.log("POINTERDOWN raw", pointer.x, pointer.y);
     const player = getPlayer();
     if (!player || !sim) {
       console.log("CLICK_IGNORED", "sim-not-ready");
@@ -1139,6 +1141,7 @@ function create() {
   const canvas = this.game.canvas;
   if (canvas) {
     canvas.addEventListener("pointerdown", (event) => {
+      console.log("POINTERDOWN raw", event.clientX, event.clientY);
       if (!sim) {
         console.log("CLICK_IGNORED", "sim-not-ready");
         return;
@@ -1474,6 +1477,30 @@ function updateMatchSpeedLabel(label) {
   label.textContent = labelText;
 }
 
+function commandMovePlayerTo(x, y) {
+  const player = getPlayer();
+  if (!player || !sim) {
+    console.log("CLICK_IGNORED", "sim-not-ready");
+    return null;
+  }
+  const snapped = sim.clampDestination(x, y);
+  if (player.state === STATE.DRILLING) {
+    sim.releaseReservation(player);
+    player.drillTimer = 0;
+  }
+  if (player.state === STATE.FISHING) {
+    player.hasHole = false;
+    player.hasCaughtHere = false;
+    player.timeAtCurrentSpot = 0;
+  }
+  player.destination = { x: snapped.x, y: snapped.y };
+  player.state = STATE.WALKING;
+  player.intentAfterArrival = "DRILL_THEN_FISH";
+  player.moveCount += 1;
+  console.log("PLAYER_MOVE_CMD", player.destination);
+  return snapped;
+}
+
 function handleMapClick(x, y, domEvent) {
   const player = getPlayer();
   if (!player || !sim) {
@@ -1485,6 +1512,7 @@ function handleMapClick(x, y, domEvent) {
   const clientY = domEvent?.clientY ?? 0;
   const elementAtPoint = domEvent ? document.elementFromPoint(clientX, clientY) : null;
   if (eventTarget?.closest?.("#hudColumn") || elementAtPoint?.closest?.("#hudColumn")) {
+    console.log("HUD_HIT", { clientX, clientY });
     console.log("CLICK_IGNORED", "hud-hit");
     return;
   }
@@ -1508,20 +1536,8 @@ function handleMapClick(x, y, domEvent) {
     console.log("CLICK_IGNORED", "too-close-to-hole");
     return;
   }
-  const snapped = sim.clampDestination(x, y);
-  if (player.state === STATE.DRILLING) {
-    sim.releaseReservation(player);
-    player.drillTimer = 0;
-  }
-  if (player.state === STATE.FISHING) {
-    player.hasHole = false;
-    player.hasCaughtHere = false;
-    player.timeAtCurrentSpot = 0;
-  }
-  player.destination = { x: snapped.x, y: snapped.y };
-  player.state = STATE.WALKING;
-  player.intentAfterArrival = "DRILL_THEN_FISH";
-  player.moveCount += 1;
+  const snapped = commandMovePlayerTo(x, y);
+  if (!snapped) return;
   clickMarkers.push({ x: snapped.x, y: snapped.y, timer: 0, duration: 0.5 });
   console.log("MAP_CLICK", { x: snapped.x, y: snapped.y });
 }
@@ -1582,9 +1598,7 @@ function updateHUD() {
   if (UI.playerDebug) {
     const dest = sim.player.destination;
     const dist = Math.hypot(dest.x - sim.player.x, dest.y - sim.player.y);
-    UI.playerDebug.textContent = `PlayerState: ${sim.player.state} | Dest: ${dest.x.toFixed(
-      1
-    )},${dest.y.toFixed(1)} | Dist: ${dist.toFixed(1)}`;
+    UI.playerDebug.textContent = `Player: ${sim.player.state} distToDest=${dist.toFixed(1)}`;
   }
   if (uiState.showGut) {
     updateGutPanel();
