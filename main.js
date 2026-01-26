@@ -33,7 +33,7 @@ const PARAMS = {
   timeScale: 8,
   socialWindow: 420,
   socialCueWeight: 0.2,
-  devMode: true,
+  devMode: false,
   seed: "ice-lake-01",
 };
 
@@ -566,12 +566,9 @@ function preload() {}
 
 function create() {
   graphics = this.add.graphics();
-  setupUI();
   resetSimulation();
+  setupUI();
   this.input.on("pointerdown", (pointer) => {
-    if (PARAMS.devMode) {
-      console.info("[dev] canvas pointerdown", { x: pointer.x, y: pointer.y });
-    }
     const player = sim.player;
     if (player.state === STATE.DRILLING || player.state === STATE.FISHING) return;
     const x = Phaser.Math.Clamp(pointer.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
@@ -746,9 +743,6 @@ function setupUI() {
   UI.status = document.getElementById("status-message");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
-    if (PARAMS.devMode) {
-      console.info("[dev] drill button clicked");
-    }
     const player = sim.player;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
     if (!sim.isHoleLocationValid(player.x, player.y)) {
@@ -762,9 +756,6 @@ function setupUI() {
   });
 
   document.getElementById("fish-btn").addEventListener("click", () => {
-    if (PARAMS.devMode) {
-      console.info("[dev] fish button clicked");
-    }
     const player = sim.player;
     if (player.state === STATE.FISHING) return;
     if (!player.hasHole) return;
@@ -775,9 +766,6 @@ function setupUI() {
   });
 
   document.getElementById("stop-btn").addEventListener("click", () => {
-    if (PARAMS.devMode) {
-      console.info("[dev] stop button clicked");
-    }
     const player = sim.player;
     if (player.state === STATE.DRILLING) {
       player.state = STATE.IDLE;
@@ -808,6 +796,7 @@ function setupUI() {
 function resetSimulation() {
   rng = new RNG(PARAMS.seed);
   sim = new Simulation(game.scene.scenes[0], rng);
+  window.sim = sim;
   crackLines = Array.from({ length: 35 }, () => {
     const x1 = rng.range(40, PARAMS.width - 40);
     const y1 = rng.range(40, PARAMS.height - 40);
