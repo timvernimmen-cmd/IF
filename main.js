@@ -6,6 +6,8 @@ const PARAMS = {
   npcSpeed: 22,
   playerSpeed: 26,
   drillTime: 5,
+  fishingBoutMin: 35,
+  fishingBoutMax: 75,
   baseCatchRate: 0.035,
   holeRadius: 2,
   holeRingRadius: 4,
@@ -463,6 +465,7 @@ class Agent {
     this.trail = [];
     this.trailTimer = 0;
     this.intentAfterArrival = "DRILL_THEN_FISH";
+    this.fishTimer = 0;
   }
   recentSuccess() {
     return this.recentSuccessTimer > 0;
@@ -566,6 +569,10 @@ class Simulation {
       this.updateFishing(agent, dt);
     }
 
+    if (![STATE.WALKING, STATE.DRILLING, STATE.FISHING].includes(agent.state)) {
+      startFishing(agent);
+    }
+
     this.enforceLakeConstraint(agent);
 
     agent.trailTimer += dt;
@@ -589,7 +596,8 @@ class Simulation {
           this.pickDestination(agent);
         } else {
           showStatus("Too close to a hole or shore. Click a different spot.");
-          agent.state = STATE.IDLE;
+          const fallback = this.randomPointInsideLake();
+          commandMove(agent, fallback.x, fallback.y);
         }
         return;
       }
@@ -609,8 +617,9 @@ class Simulation {
           nextX = adjusted.x;
           nextY = adjusted.y;
         } else {
-          agent.state = STATE.IDLE;
           showStatus("Too close to a hole. Choose another path.");
+          const fallback = this.randomPointInsideLake();
+          commandMove(agent, fallback.x, fallback.y);
           return;
         }
       } else {
@@ -620,8 +629,9 @@ class Simulation {
     }
     if (!isInsideLake(nextX, nextY)) {
       if (agent.isPlayer) {
-        agent.state = STATE.IDLE;
         showStatus("Move within the lake boundary.");
+        const fallback = this.randomPointInsideLake();
+        commandMove(agent, fallback.x, fallback.y);
       } else {
         this.pickDestination(agent);
       }
@@ -635,10 +645,10 @@ class Simulation {
     if (agent.drillTimer <= 0) {
       this.releaseReservation(agent);
       agent.hasHole = true;
-      agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
+      const rodTip = getRodTip(agent);
+      agent.hole = { x: rodTip.x, y: rodTip.y, owner: agent.id };
       this.holes.push(agent.hole);
-      agent.state = STATE.FISHING;
-      agent.timeAtCurrentSpot = 0;
+      startFishing(agent);
       if (!agent.isPlayer) {
         agent.nextDecisionAt = this.simTime + this.rng.range(20, 33);
       }
@@ -647,6 +657,7 @@ class Simulation {
   updateFishing(agent, dt) {
     agent.timeAtCurrentSpot += dt;
     agent.leaveCheckTimer += dt;
+    agent.fishTimer = Math.max(0, agent.fishTimer - dt);
     const fishDensity = this.fishField.sample(agent.x, agent.y);
     const shoreDist = distanceToLakeEdge(agent.x, agent.y);
     const shoreFactor = shoreMultiplier(shoreDist);
@@ -671,6 +682,16 @@ class Simulation {
     }
 
     if (!agent.isPlayer) {
+      if (agent.fishTimer <= 0) {
+        agent.state = STATE.WALKING;
+        agent.timeAtCurrentSpot = 0;
+        agent.hasCaughtHere = false;
+        agent.hasHole = false;
+        agent.hole = null;
+        this.pickDestination(agent);
+        agent.nextDecisionAt = this.simTime + this.rng.range(10, 18);
+        return;
+      }
       if (agent.timeAtCurrentSpot < PARAMS.minDwell) {
         return;
       }
@@ -1247,6 +1268,10 @@ function drawClickMarkers() {
   }
 }
 
+function getRodTip(agent) {
+  return { x: agent.x + 10, y: agent.y + 10 };
+}
+
 function drawAgents(time) {
   sim.agents.forEach((agent) => {
     const bodyColor = agent.isPlayer ? 0xffe18a : 0x7bb7d9;
@@ -1261,24 +1286,22 @@ function drawAgents(time) {
     graphics.strokeEllipse(agent.x, agent.y, size * 2.2, size * 1.8);
 
     if (agent.state === STATE.DRILLING) {
-      drawAuger(agent, time);
+      drawRod(agent);
       drawDrillProgress(agent);
     }
     if (agent.state === STATE.FISHING) {
+      drawRod(agent);
       drawFishingLine(agent, time);
     }
   });
 }
 
-function drawAuger(agent, time) {
-  const radius = 8;
-  const angle = time * 6 + agent.id;
-  const x2 = agent.x + Math.cos(angle) * radius;
-  const y2 = agent.y + Math.sin(angle) * radius;
+function drawRod(agent) {
+  const rodTip = getRodTip(agent);
   graphics.lineStyle(2, 0xe0f7ff, 0.8);
   graphics.beginPath();
   graphics.moveTo(agent.x, agent.y);
-  graphics.lineTo(x2, y2);
+  graphics.lineTo(rodTip.x, rodTip.y);
   graphics.strokePath();
 }
 
@@ -1291,14 +1314,19 @@ function drawDrillProgress(agent) {
 }
 
 function drawFishingLine(agent, time) {
+  const rodTip = getRodTip(agent);
+  graphics.fillStyle(0x0b1420, 1);
+  graphics.fillCircle(rodTip.x, rodTip.y, PARAMS.holeRadius);
+  graphics.lineStyle(1, 0x6aaed6, 0.3);
+  graphics.strokeCircle(rodTip.x, rodTip.y, PARAMS.holeRingRadius);
   const bobOffset = Math.sin(time * 2 + agent.id) * 2;
   graphics.lineStyle(1, 0xd5f3ff, 0.6);
   graphics.beginPath();
-  graphics.moveTo(agent.x, agent.y + 6);
-  graphics.lineTo(agent.x, agent.y + 16 + bobOffset);
+  graphics.moveTo(rodTip.x, rodTip.y);
+  graphics.lineTo(rodTip.x, rodTip.y + 10 + bobOffset);
   graphics.strokePath();
   graphics.fillStyle(0xff6b6b, 1);
-  graphics.fillCircle(agent.x, agent.y + 18 + bobOffset, 2.5);
+  graphics.fillCircle(rodTip.x, rodTip.y + 12 + bobOffset, 2.5);
 }
 
 function drawCatchEffects() {
@@ -1332,6 +1360,8 @@ function setupUI() {
   UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
   UI.gutMessage = document.getElementById("gut-message");
+  UI.gutSocial = document.getElementById("gut-social");
+  UI.gutRecent = document.getElementById("gut-recent-catches");
   UI.toastStack = document.getElementById("toast-stack");
   UI.status = document.getElementById("status-message");
   UI.errorBanner = document.getElementById("error-banner");
@@ -1463,6 +1493,18 @@ function showErrorBanner(message) {
   UI.errorBanner.classList.remove("hidden");
 }
 
+function sampleFishingBoutDuration(agent) {
+  const min = PARAMS.fishingBoutMin;
+  const max = PARAMS.fishingBoutMax;
+  return (sim?.rng ?? rng).range(min, max);
+}
+
+function startFishing(agent) {
+  agent.state = STATE.FISHING;
+  agent.fishTimer = sampleFishingBoutDuration(agent);
+  agent.timeAtCurrentSpot = 0;
+}
+
 function formatDuration(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = Math.floor(totalSeconds % 60);
@@ -1477,6 +1519,21 @@ function updateMatchSpeedLabel(label) {
   label.textContent = labelText;
 }
 
+function commandMove(agent, x, y) {
+  if (agent.state === STATE.DRILLING) {
+    sim.releaseReservation(agent);
+    agent.drillTimer = 0;
+  }
+  if (agent.state === STATE.FISHING) {
+    agent.hasHole = false;
+    agent.hasCaughtHere = false;
+    agent.timeAtCurrentSpot = 0;
+  }
+  agent.destination = { x, y };
+  agent.state = STATE.WALKING;
+  agent.intentAfterArrival = "DRILL_THEN_FISH";
+}
+
 function commandMovePlayerTo(x, y) {
   const player = getPlayer();
   if (!player || !sim) {
@@ -1484,18 +1541,7 @@ function commandMovePlayerTo(x, y) {
     return null;
   }
   const snapped = sim.clampDestination(x, y);
-  if (player.state === STATE.DRILLING) {
-    sim.releaseReservation(player);
-    player.drillTimer = 0;
-  }
-  if (player.state === STATE.FISHING) {
-    player.hasHole = false;
-    player.hasCaughtHere = false;
-    player.timeAtCurrentSpot = 0;
-  }
-  player.destination = { x: snapped.x, y: snapped.y };
-  player.state = STATE.WALKING;
-  player.intentAfterArrival = "DRILL_THEN_FISH";
+  commandMove(player, snapped.x, snapped.y);
   player.moveCount += 1;
   console.log("PLAYER_MOVE_CMD", player.destination);
   return snapped;
@@ -1539,7 +1585,7 @@ function handleMapClick(x, y, domEvent) {
   const snapped = commandMovePlayerTo(x, y);
   if (!snapped) return;
   clickMarkers.push({ x: snapped.x, y: snapped.y, timer: 0, duration: 0.5 });
-  console.log("MAP_CLICK", { x: snapped.x, y: snapped.y });
+  console.log("MOVE_ACCEPTED", snapped.x, snapped.y);
 }
 
 function pushToast(text, type = "info") {
@@ -1625,21 +1671,41 @@ function updateGutPanel() {
     if (dist2 > PARAMS.neighborRadius * PARAMS.neighborRadius) return false;
     return sim.simTime - agent.lastCatchTime <= PARAMS.socialWindow;
   }).length;
-  const localDensity = sim.spatialHash.countWithin(
+  sim.spatialHash.countWithin(
     player.x,
     player.y,
     PARAMS.neighborRadius,
     player.id
   );
   const anchorBonus = sim.simTime < player.anchorUntil ? PARAMS.anchorStrength : 0;
-  const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
+  const crowdBonus = 0;
   const socialCue = -PARAMS.socialCueWeight * nearbyRecentSuccessCount;
-  const timeTerm = player.timeSinceLastCatch / PARAMS.gutTau;
+  const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+  const compression = REAL_MATCH_SECONDS / targetGameSeconds;
+  const timeSinceLastCatchReal = player.timeSinceLastCatch / compression;
+  const tau = timeSinceLastCatchReal / REAL_MATCH_SECONDS;
+  const timeTerm = tau / 0.35;
   const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
   const clampedPressure = Phaser.Math.Clamp(pressure, 0, 1);
-  UI.gutPressure.textContent = clampedPressure.toFixed(2);
-  UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
+  UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
+  if (UI.gutRecent) {
+    const windowMinutes = Math.round(PARAMS.socialWindow / 60);
+    UI.gutRecent.textContent = `Nearby recent catches (last ${windowMinutes} min, within ${Math.round(
+      PARAMS.neighborRadius
+    )} m): ${nearbyRecentSuccessCount}`;
+  }
+  if (UI.gutSocial) {
+    let socialLabel = "none";
+    if (nearbyRecentSuccessCount >= 4) {
+      socialLabel = "strong";
+    } else if (nearbyRecentSuccessCount >= 2) {
+      socialLabel = "moderate";
+    } else if (nearbyRecentSuccessCount >= 1) {
+      socialLabel = "weak";
+    }
+    UI.gutSocial.textContent = socialLabel;
+  }
   if (UI.gutMessage) {
     let message = "Most fishers would stay.";
     if (clampedPressure >= 0.75) {
