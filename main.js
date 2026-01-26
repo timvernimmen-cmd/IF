@@ -1109,6 +1109,9 @@ function setupUI() {
   UI.gutEvents = document.getElementById("gut-events");
   UI.status = document.getElementById("status-message");
   UI.errorBanner = document.getElementById("error-banner");
+  const seedInput = document.getElementById("seed-input");
+  const seedReset = document.getElementById("seed-reset");
+  const seedRandomize = document.getElementById("seed-randomize");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
     const player = getPlayer();
@@ -1152,6 +1155,31 @@ function setupUI() {
     if (player.state === STATE.FISHING) {
       player.state = STATE.READY;
       return;
+    }
+  });
+
+  const applySeed = (nextSeed) => {
+    const cleaned = nextSeed.trim();
+    if (!cleaned) {
+      showStatus("Enter a seed to reset the lake.");
+      return;
+    }
+    PARAMS.seed = cleaned;
+    seedInput.value = cleaned;
+    resetSimulation();
+    showStatus(`Resetting with seed "${cleaned}".`);
+  };
+
+  seedInput.value = PARAMS.seed;
+  seedReset.addEventListener("click", () => applySeed(seedInput.value));
+  seedRandomize.addEventListener("click", () => {
+    const randomSeed = `ice-${Math.random().toString(36).slice(2, 8)}`;
+    applySeed(randomSeed);
+  });
+  seedInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applySeed(seedInput.value);
     }
   });
 

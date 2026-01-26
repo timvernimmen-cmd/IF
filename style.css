@@ -140,6 +140,33 @@ button:hover {
   color: var(--muted);
 }
 
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.seed-row input {
+  flex: 1;
+  background: rgba(9, 16, 28, 0.9);
+  border: 1px solid #274158;
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.seed-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.seed-actions button {
+  flex: 1;
+}
+
 input[type="range"] {
   flex: 1;
 }

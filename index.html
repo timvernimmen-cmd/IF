@@ -25,22 +25,30 @@
           </div>
           <div id="ui-panel" class="panel">
             <div class="controls">
-            <div class="hint">Click on the lake to move.</div>
-            <div class="buttons">
-              <button id="drill-btn">Drill hole</button>
-              <button id="fish-btn">Fish</button>
-              <button id="stop-btn">Stop</button>
-            </div>
-            <div class="inline">
-              <label>Sim speed</label>
-              <input type="range" id="sim-speed" min="0.5" max="2" step="0.1" value="1" />
-              <span id="sim-speed-value">1.0x</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" id="show-gut" />
-              Show GUT indicator
-            </label>
-            <div id="status-message" class="status hidden"></div>
+              <div class="hint">Click on the lake to move.</div>
+              <div class="buttons">
+                <button id="drill-btn">Drill hole</button>
+                <button id="fish-btn">Fish</button>
+                <button id="stop-btn">Stop</button>
+              </div>
+              <div class="seed-row">
+                <label for="seed-input">Seed</label>
+                <input type="text" id="seed-input" spellcheck="false" autocomplete="off" />
+              </div>
+              <div class="seed-actions">
+                <button id="seed-reset">Reset run</button>
+                <button id="seed-randomize">New seed</button>
+              </div>
+              <div class="inline">
+                <label>Sim speed</label>
+                <input type="range" id="sim-speed" min="0.5" max="2" step="0.1" value="1" />
+                <span id="sim-speed-value">1.0x</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="show-gut" />
+                Show GUT indicator
+              </label>
+              <div id="status-message" class="status hidden"></div>
             </div>
             <div id="gut-panel" class="gut hidden">
               <h3>Giving-up pressure (GUT)</h3>
