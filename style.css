@@ -201,14 +201,35 @@ input[type="range"] {
   color: var(--muted);
 }
 
-.gut-events {
+.gut-message {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: #b8d0e6;
-  max-height: 140px;
-  overflow: auto;
 }
 
-.gut-events div {
-  margin-bottom: 4px;
+.toast-stack {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toast {
+  font-size: 11px;
+  color: #e4f1ff;
+  background: rgba(15, 26, 40, 0.85);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.toast-success {
+  border: 1px solid rgba(122, 215, 255, 0.4);
+}
+
+.toast-neighbor {
+  border: 1px solid rgba(255, 224, 138, 0.4);
+}
+
+.toast-info {
+  border: 1px solid rgba(157, 179, 199, 0.3);
 }

@@ -490,7 +490,6 @@ class Simulation {
     this.globalSuccessSignal = null;
     this.player = null;
     this.simTime = 0;
-    this.gutEvents = [];
     this.initializeAgents();
   }
   findSpawnPoint(existingAgents) {
@@ -585,14 +584,10 @@ class Simulation {
       if (agent.isPlayer) {
         agent.state = STATE.IDLE;
       } else {
-        if (this.isHoleLocationValid(agent.x, agent.y)) {
-          this.reserveHole(agent);
-          agent.state = STATE.DRILLING;
-          agent.drillTimer = PARAMS.drillTime;
-          agent.timeAtCurrentSpot = 0;
-        } else {
-          this.pickDestination(agent);
-        }
+        this.reserveHole(agent);
+        agent.state = STATE.DRILLING;
+        agent.drillTimer = PARAMS.drillTime;
+        agent.timeAtCurrentSpot = 0;
       }
       return;
     }
@@ -600,14 +595,16 @@ class Simulation {
     let nextX = agent.x + (dx / dist) * step;
     let nextY = agent.y + (dy / dist) * step;
     if (this.isPointTooCloseToHole(nextX, nextY)) {
-      const adjusted = this.findHoleAdjustedStep(agent, Math.atan2(dy, dx), step);
-      if (adjusted) {
-        nextX = adjusted.x;
-        nextY = adjusted.y;
-      } else if (agent.isPlayer) {
-        agent.state = STATE.IDLE;
-        showStatus("Too close to a hole. Choose another path.");
-        return;
+      if (agent.isPlayer) {
+        const adjusted = this.findHoleAdjustedStep(agent, Math.atan2(dy, dx), step);
+        if (adjusted) {
+          nextX = adjusted.x;
+          nextY = adjusted.y;
+        } else {
+          agent.state = STATE.IDLE;
+          showStatus("Too close to a hole. Choose another path.");
+          return;
+        }
       } else {
         this.pickDestination(agent);
         return;
@@ -618,14 +615,7 @@ class Simulation {
         agent.state = STATE.IDLE;
         showStatus("Move within the lake boundary.");
       } else {
-        const adjusted = this.turnInwardStep(agent, Math.atan2(dy, dx), step);
-        if (adjusted) {
-          nextX = adjusted.x;
-          nextY = adjusted.y;
-        } else {
-          this.pickDestination(agent);
-          return;
-        }
+        this.pickDestination(agent);
       }
       return;
     }
@@ -665,7 +655,7 @@ class Simulation {
       this.recordSuccessEvent(agent);
       this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
-        this.pushGutEvent("You caught a fish (pressure reset).", "success");
+        pushToast("You caught a fish (pressure reset).", "success");
       } else {
         this.notifyNeighborCatch(agent);
       }
@@ -757,7 +747,7 @@ class Simulation {
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
       player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
-      this.pushGutEvent(
+      pushToast(
         `Neighbor caught a fish nearby (within ${Math.round(
           PARAMS.neighborRadius
         )}m, within ${Math.round(PARAMS.socialWindow / 60)} min).`,
@@ -904,13 +894,6 @@ class Simulation {
     );
     agent.reservedSpot = null;
   }
-  pushGutEvent(text, type) {
-    const timestamp = Math.floor(this.simTime);
-    this.gutEvents.unshift({ text, type, timestamp });
-    if (this.gutEvents.length > 5) {
-      this.gutEvents.pop();
-    }
-  }
   enforceLakeConstraint(agent) {
     if (isInsideLake(agent.x, agent.y)) {
       return;
@@ -979,29 +962,6 @@ class Simulation {
     const offsets = [0, 10, -10, 20, -20, 30, -30, 40, -40];
     for (const offset of offsets) {
       const angle = baseAngle + Phaser.Math.DegToRad(offset);
-      const candidate = {
-        x: agent.x + Math.cos(angle) * step,
-        y: agent.y + Math.sin(angle) * step,
-      };
-      if (!isInsideLake(candidate.x, candidate.y)) {
-        continue;
-      }
-      if (!this.isPointTooCloseToHole(candidate.x, candidate.y)) {
-        return candidate;
-      }
-    }
-    return null;
-  }
-
-  turnInwardStep(agent, baseAngle, step) {
-    const centroid = lakeCentroid();
-    const desiredAngle = Math.atan2(centroid.y - agent.y, centroid.x - agent.x);
-    for (let i = 1; i <= 8; i += 1) {
-      const angle = Phaser.Math.Angle.RotateTo(
-        baseAngle,
-        desiredAngle,
-        Phaser.Math.DegToRad(10) * i
-      );
       const candidate = {
         x: agent.x + Math.cos(angle) * step,
         y: agent.y + Math.sin(angle) * step,
@@ -1104,6 +1064,11 @@ class Simulation {
 
 const uiState = {
   showGut: false,
+};
+
+const toastState = {
+  items: [],
+  lifetime: 2.5,
 };
 
 const config = {
@@ -1346,9 +1311,8 @@ function setupUI() {
   UI.gutPanel = document.getElementById("gut-panel");
   UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
-  UI.gutAnchor = document.getElementById("gut-anchor");
-  UI.gutCrowd = document.getElementById("gut-crowd");
-  UI.gutEvents = document.getElementById("gut-events");
+  UI.gutMessage = document.getElementById("gut-message");
+  UI.toastStack = document.getElementById("toast-stack");
   UI.status = document.getElementById("status-message");
   UI.errorBanner = document.getElementById("error-banner");
   const seedInput = document.getElementById("seed-input");
@@ -1504,6 +1468,10 @@ function getPlayer() {
 }
 
 function showStatus(message) {
+  if (UI.toastStack) {
+    pushToast(message, "info");
+    return;
+  }
   if (!UI.status) return;
   UI.status.textContent = message;
   UI.status.classList.remove("hidden");
@@ -1517,6 +1485,35 @@ function showErrorBanner(message) {
   if (!UI.errorBanner) return;
   UI.errorBanner.textContent = message;
   UI.errorBanner.classList.remove("hidden");
+}
+
+function pushToast(text, type = "info") {
+  if (!UI.toastStack) return;
+  const now = sim?.simTime ?? 0;
+  toastState.items.push({
+    text,
+    type,
+    createdAt: now,
+    expiresAt: now + toastState.lifetime,
+  });
+}
+
+function renderToasts() {
+  if (!UI.toastStack) return;
+  const now = sim?.simTime ?? 0;
+  toastState.items = toastState.items.filter((toast) => toast.expiresAt > now);
+  UI.toastStack.innerHTML = "";
+  toastState.items.forEach((toast) => {
+    const remaining = toast.expiresAt - now;
+    const fadeStart = 0.6;
+    const opacity =
+      remaining < fadeStart ? Math.max(0, remaining / fadeStart) : 1;
+    const toastEl = document.createElement("div");
+    toastEl.className = `toast toast-${toast.type}`;
+    toastEl.style.opacity = opacity.toFixed(2);
+    toastEl.textContent = toast.text;
+    UI.toastStack.appendChild(toastEl);
+  });
 }
 
 function updateHUD() {
@@ -1546,6 +1543,7 @@ function updateHUD() {
   if (uiState.showGut) {
     updateGutPanel();
   }
+  renderToasts();
 }
 
 function estimateRank(playerCatches) {
@@ -1559,12 +1557,6 @@ function estimateRank(playerCatches) {
 
 function updateGutPanel() {
   const player = sim.player;
-  const localDensity = sim.spatialHash.countWithin(
-    player.x,
-    player.y,
-    PARAMS.neighborRadius,
-    player.id
-  );
   const nearbyRecentSuccessCount = sim.agents.filter((agent) => {
     if (agent.isPlayer) return false;
     const dx = agent.x - player.x;
@@ -1573,63 +1565,30 @@ function updateGutPanel() {
     if (dist2 > PARAMS.neighborRadius * PARAMS.neighborRadius) return false;
     return sim.simTime - agent.lastCatchTime <= PARAMS.socialWindow;
   }).length;
+  const localDensity = sim.spatialHash.countWithin(
+    player.x,
+    player.y,
+    PARAMS.neighborRadius,
+    player.id
+  );
   const anchorBonus = sim.simTime < player.anchorUntil ? PARAMS.anchorStrength : 0;
   const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
   const socialCue = -PARAMS.socialCueWeight * nearbyRecentSuccessCount;
   const timeTerm = player.timeSinceLastCatch / PARAMS.gutTau;
   const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
-  const mode = sim.getMovementMode(player);
-  const socialTarget = sim.getSocialTarget(player);
-  const globalSignal = sim.getGlobalSuccessSignal();
-  UI.gutPressure.textContent = pressure.toFixed(2);
+  const clampedPressure = Phaser.Math.Clamp(pressure, 0, 1);
+  UI.gutPressure.textContent = clampedPressure.toFixed(2);
   UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
-  UI.gutAnchor.textContent = player.hasCaughtHere ? "ON" : "OFF";
-  UI.gutCrowd.textContent = localDensity;
-
-  UI.gutEvents.innerHTML = "";
-  if (sim.gutEvents.length === 0) {
-    const empty = document.createElement("div");
-    empty.textContent = "Time passes without a catch: pressure rises.";
-    UI.gutEvents.appendChild(empty);
-  } else {
-    sim.gutEvents.forEach((event) => {
-      const line = document.createElement("div");
-      line.textContent = `[${event.timestamp}s] ${event.text}`;
-      UI.gutEvents.appendChild(line);
-    });
+  if (UI.gutMessage) {
+    let message = "Most fishers would stay.";
+    if (clampedPressure >= 0.75) {
+      message = "Nearly everyone would leave now.";
+    } else if (clampedPressure >= 0.55) {
+      message = "Most fishers would leave now.";
+    } else if (clampedPressure >= 0.35) {
+      message = "Borderline: many fishers would consider moving.";
+    }
+    UI.gutMessage.textContent = message;
   }
-  const modeLine = document.createElement("div");
-  modeLine.textContent = `Mode: ${mode}`;
-  const densityLine = document.createElement("div");
-  densityLine.textContent = `Nearby fishers: ${localDensity}`;
-  const successLine = document.createElement("div");
-  successLine.textContent = `Nearby recent successes: ${nearbyRecentSuccessCount} (window ${Math.round(
-    PARAMS.socialWindow / 60
-  )} min)`;
-  const socialTargetLine = document.createElement("div");
-  socialTargetLine.textContent = `Social target: ${
-    socialTarget ? `${Math.round(socialTarget.x)}, ${Math.round(socialTarget.y)}` : "none"
-  }`;
-  const globalLine = document.createElement("div");
-  globalLine.textContent = `Global success signal: ${
-    globalSignal
-      ? `${globalSignal.strength.toFixed(2)} (age ${Math.round(globalSignal.age)}s, ${
-          globalSignal.agentId === player.id ? "player" : "npc"
-        })`
-      : "none"
-  }`;
-  const breakdown = document.createElement("div");
-  breakdown.textContent = `Pressure = sigmoid(${timeTerm.toFixed(2)} - ${anchorBonus.toFixed(
-    2
-  )} + ${crowdBonus.toFixed(2)} + ${socialCue.toFixed(2)})`;
-  const detail = document.createElement("div");
-  detail.textContent = `Social success term: ${socialCue.toFixed(2)}`;
-  UI.gutEvents.appendChild(modeLine);
-  UI.gutEvents.appendChild(densityLine);
-  UI.gutEvents.appendChild(successLine);
-  UI.gutEvents.appendChild(socialTargetLine);
-  UI.gutEvents.appendChild(globalLine);
-  UI.gutEvents.appendChild(breakdown);
-  UI.gutEvents.appendChild(detail);
 }
