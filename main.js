@@ -53,6 +53,32 @@ function worldRect() {
   return { x, y, w, h };
 }
 
+function isInsideWorld(x, y) {
+  const world = worldRect();
+  return x >= world.x && x <= world.x + world.w && y >= world.y && y <= world.y + world.h;
+}
+
+function isInForbidden(x, y) {
+  return !isInsideWorld(x, y);
+}
+
+function isInsideLake(x, y) {
+  if (!isInsideWorld(x, y)) {
+    return false;
+  }
+  if (lakePolygon.length < 3) return true;
+  let inside = false;
+  for (let i = 0, j = lakePolygon.length - 1; i < lakePolygon.length; j = i, i += 1) {
+    const xi = lakePolygon[i].x;
+    const yi = lakePolygon[i].y;
+    const xj = lakePolygon[j].x;
+    const yj = lakePolygon[j].y;
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 const STATE = {
   IDLE: "IDLE",
   WALKING: "WALKING",
@@ -410,7 +436,7 @@ class Simulation {
     const step = Math.min(dist, agent.speed * dt);
     let nextX = agent.x + (dx / dist) * step;
     let nextY = agent.y + (dy / dist) * step;
-    if (!this.isInsideLake(nextX, nextY)) {
+    if (!isInsideLake(nextX, nextY)) {
       if (agent.isPlayer) {
         agent.state = STATE.IDLE;
         showStatus("Move within the lake boundary.");
@@ -597,7 +623,7 @@ class Simulation {
           const targetX = globalSignal.x + Math.cos(angle) * jitter;
           const targetY = globalSignal.y + Math.sin(angle) * jitter;
           if (
-            !this.isInForbidden(targetX, targetY) &&
+            !isInForbidden(targetX, targetY) &&
             this.isHoleLocationValid(targetX, targetY)
           ) {
             agent.destination = {
@@ -618,7 +644,7 @@ class Simulation {
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
-      if (!this.isInsideLake(rawX, rawY)) {
+      if (!isInsideLake(rawX, rawY)) {
         continue;
       }
       const x = rawX;
@@ -659,7 +685,7 @@ class Simulation {
     }
   }
   isHoleLocationValid(x, y) {
-    if (!this.isInsideLake(x, y)) {
+    if (!isInsideLake(x, y)) {
       return false;
     }
     const minDist = PARAMS.minHoleSpacing;
@@ -691,27 +717,7 @@ class Simulation {
       this.gutEvents.pop();
     }
   }
-  isInsideLake(x, y) {
-    if (!this.isInsideWorld(x, y)) {
-      return false;
-    }
-    if (lakePolygon.length < 3) return true;
-    let inside = false;
-    for (let i = 0, j = lakePolygon.length - 1; i < lakePolygon.length; j = i, i += 1) {
-      const xi = lakePolygon[i].x;
-      const yi = lakePolygon[i].y;
-      const xj = lakePolygon[j].x;
-      const yj = lakePolygon[j].y;
-      const intersect =
-        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-  isInsideWorld(x, y) {
-    const world = worldRect();
-    return x >= world.x && x <= world.x + world.w && y >= world.y && y <= world.y + world.h;
-  }
+  
   slideAlongBoundary(agent, dx, dy, step) {
     const baseAngle = Math.atan2(dy, dx);
     const attempts = [15, -15, 30, -30, 45, -45];
@@ -721,7 +727,7 @@ class Simulation {
         x: agent.x + Math.cos(angle) * step,
         y: agent.y + Math.sin(angle) * step,
       };
-      if (this.isInsideLake(candidate.x, candidate.y)) {
+      if (isInsideLake(candidate.x, candidate.y)) {
         return candidate;
       }
     }
@@ -830,7 +836,7 @@ function create() {
     ) {
       return;
     }
-    if (!sim.isInsideLake(pointer.x, pointer.y)) {
+    if (!isInsideLake(pointer.x, pointer.y)) {
       showStatus("Destination outside lake.");
       return;
     }
