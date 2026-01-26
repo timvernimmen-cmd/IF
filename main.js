@@ -9,12 +9,12 @@ const PARAMS = {
   fishingBoutMin: 35,
   fishingBoutMax: 75,
   baseCatchRate: 0.035,
-  holeVisualRadius: 2,
-  holeRingRadius: 3,
-  holeSafetyRadius: 14,
+  holeVisualRadius: 1.5,
+  holeRingRadius: 2.2,
+  holeSafetyRadius: 4,
   agentRadius: 10,
-  holeMinSpacing: 12,
-  minHoleSpacing: 30,
+  holeMinSpacing: 4,
+  minHoleSpacing: 4,
   minShoreDist: 24,
   lakeSafeInset: 8,
   minDwell: 20,
@@ -44,6 +44,8 @@ const PARAMS = {
   socialCueWeight: 0.2,
   gutTau: 100,
   neighborSuccessSuppress: 40,
+  holeFadeStart: 600,
+  holeFadeDuration: 300,
   forbiddenZone: { x: 0, y: 0, w: 0, h: 0 },
   devMode: false,
   seed: "ice-lake-01",
@@ -647,7 +649,7 @@ class Simulation {
       this.releaseReservation(agent);
       agent.hasHole = true;
       const rodTip = getRodTip(agent);
-      agent.hole = { x: rodTip.x, y: rodTip.y, owner: agent.id };
+      agent.hole = { x: rodTip.x, y: rodTip.y, owner: agent.id, createdAt: this.simTime };
       this.holes.push(agent.hole);
       startFishing(agent);
       if (!agent.isPlayer) {
@@ -1156,6 +1158,7 @@ class Simulation {
 
 const uiState = {
   showGut: false,
+  contestEnded: false,
 };
 
 const toastState = {
@@ -1234,7 +1237,7 @@ function update(time) {
       return;
     }
     rawDt = Math.min(rawDt, 0.05);
-    const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+    const targetGameSeconds = getContestDuration();
     const compression = REAL_MATCH_SECONDS / targetGameSeconds;
     let dtSim = rawDt * compression;
     if (!Number.isFinite(dtSim)) {
@@ -1242,7 +1245,22 @@ function update(time) {
       showErrorBanner("Non-finite dtSim. Check match duration.");
     }
     lastDt = dtSim;
-    sim.update(dtSim);
+    if (!uiState.contestEnded) {
+      const contestDuration = getContestDuration();
+      const remaining = contestDuration - sim.simTime;
+      if (remaining <= 0) {
+        sim.simTime = contestDuration;
+        uiState.contestEnded = true;
+        showContestResults();
+      } else if (dtSim >= remaining) {
+        sim.update(remaining);
+        sim.simTime = contestDuration;
+        uiState.contestEnded = true;
+        showContestResults();
+      } else {
+        sim.update(dtSim);
+      }
+    }
     renderScene(time / 1000);
     updateHUD();
   } catch (err) {
@@ -1292,10 +1310,22 @@ function drawLakeBackground() {
 }
 
 function drawHoles() {
+  const now = sim?.simTime ?? 0;
   sim.holes.forEach((hole) => {
-    graphics.fillStyle(0x0b1420, 1);
+    let alpha = 0.7;
+    if (Number.isFinite(hole.createdAt)) {
+      const age = now - hole.createdAt;
+      if (age > PARAMS.holeFadeStart) {
+        const fadeProgress = (age - PARAMS.holeFadeStart) / PARAMS.holeFadeDuration;
+        alpha *= Math.max(0, 1 - fadeProgress);
+      }
+    }
+    if (alpha <= 0.02) {
+      return;
+    }
+    graphics.fillStyle(0x0b1420, alpha);
     graphics.fillCircle(hole.x, hole.y, PARAMS.holeVisualRadius);
-    graphics.lineStyle(1, 0x6aaed6, 0.3);
+    graphics.lineStyle(1, 0x6aaed6, alpha * 0.5);
     graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRingRadius);
   });
 }
@@ -1429,6 +1459,13 @@ function setupUI() {
   UI.toastStack = document.getElementById("toast-stack");
   UI.status = document.getElementById("status-message");
   UI.errorBanner = document.getElementById("error-banner");
+  UI.endOverlay = document.getElementById("end-overlay");
+  UI.endTitle = document.getElementById("end-title");
+  UI.endMessage = document.getElementById("end-message");
+  UI.endSubmessage = document.getElementById("end-submessage");
+  UI.endLink = document.getElementById("end-link");
+  UI.endRestart = document.getElementById("end-restart");
+  UI.endReplay = document.getElementById("end-replay");
   const seedInput = document.getElementById("seed-input");
   const seedReset = document.getElementById("seed-reset");
   const seedRandomize = document.getElementById("seed-randomize");
@@ -1489,6 +1526,17 @@ function setupUI() {
     uiState.showGut = event.target.checked;
     UI.gutPanel.classList.toggle("hidden", !uiState.showGut);
   });
+
+  UI.endRestart?.addEventListener("click", () => {
+    uiState.contestEnded = false;
+    hideEndOverlay();
+    resetSimulation();
+  });
+
+  UI.endReplay?.addEventListener("click", () => {
+    hideEndOverlay();
+    showStatus("Adjust match duration, then click Reset run to replay.");
+  });
 }
 
 function resetSimulation() {
@@ -1496,6 +1544,8 @@ function resetSimulation() {
   lakePolygon = generateLakePolygon();
   sim = new Simulation(game.scene.scenes[0], rng);
   window.sim = sim;
+  uiState.contestEnded = false;
+  hideEndOverlay();
   if (UI.errorBanner) {
     UI.errorBanner.classList.add("hidden");
   }
@@ -1551,6 +1601,58 @@ function showStatus(message) {
   }, 3000);
 }
 
+function hideEndOverlay() {
+  if (UI.endOverlay) {
+    UI.endOverlay.classList.add("hidden");
+  }
+}
+
+function showEndOverlay() {
+  if (UI.endOverlay) {
+    UI.endOverlay.classList.remove("hidden");
+  }
+}
+
+function getFinalCatchTime(agent) {
+  return Number.isFinite(agent.lastCatchTime) ? agent.lastCatchTime : Infinity;
+}
+
+function computeContestResults() {
+  const ranked = sim.agents
+    .slice()
+    .sort((a, b) => {
+      if (b.catchesTotal !== a.catchesTotal) {
+        return b.catchesTotal - a.catchesTotal;
+      }
+      return getFinalCatchTime(a) - getFinalCatchTime(b);
+    });
+  const playerIndex = ranked.findIndex((agent) => agent.isPlayer);
+  return {
+    playerRank: playerIndex >= 0 ? playerIndex + 1 : ranked.length,
+    totalParticipants: ranked.length,
+  };
+}
+
+function showContestResults() {
+  const { playerRank, totalParticipants } = computeContestResults();
+  if (UI.endTitle) {
+    UI.endTitle.textContent =
+      playerRank === 1
+        ? "Congratulations — you won!"
+        : `You finished in position ${playerRank} out of ${totalParticipants}.`;
+  }
+  if (UI.endMessage) {
+    UI.endMessage.textContent = "";
+    UI.endMessage.classList.add("hidden");
+  }
+  if (UI.endSubmessage) {
+    UI.endSubmessage.textContent =
+      playerRank === 1 ? "" : "No worries — most of the others have been practicing for decades.";
+    UI.endSubmessage.classList.toggle("hidden", playerRank === 1);
+  }
+  showEndOverlay();
+}
+
 function showErrorBanner(message) {
   if (!UI.errorBanner) return;
   UI.errorBanner.textContent = message;
@@ -1575,9 +1677,13 @@ function formatDuration(totalSeconds) {
   return `${minutes}m ${seconds}s`;
 }
 
+function getContestDuration() {
+  return Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+}
+
 function updateMatchSpeedLabel(label) {
   if (!label) return;
-  const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+  const targetGameSeconds = getContestDuration();
   const compression = REAL_MATCH_SECONDS / targetGameSeconds;
   const labelText = `3h → ${formatDuration(targetGameSeconds)} (x${Math.round(compression)})`;
   label.textContent = labelText;
@@ -1615,6 +1721,10 @@ function handleMapClick(x, y, domEvent) {
   const player = getPlayer();
   if (!player || !sim) {
     console.log("CLICK_IGNORED", "sim-not-ready");
+    return;
+  }
+  if (uiState.contestEnded) {
+    console.log("CLICK_IGNORED", "contest-ended");
     return;
   }
   const eventTarget = domEvent?.target;
@@ -1731,7 +1841,7 @@ function updateGutPanel() {
     PARAMS.neighborRadius,
     player.id
   );
-  const targetGameSeconds = Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
+  const targetGameSeconds = getContestDuration();
   const compression = REAL_MATCH_SECONDS / targetGameSeconds;
   const timeSinceLastCatchReal = player.timeSinceLastCatch / compression;
   const tau = timeSinceLastCatchReal / REAL_MATCH_SECONDS;

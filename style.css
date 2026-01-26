@@ -126,6 +126,60 @@ body {
   font-size: 12px;
 }
 
+.end-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 10, 18, 0.72);
+  pointer-events: auto;
+  z-index: 4;
+}
+
+.end-modal {
+  background: rgba(12, 18, 32, 0.92);
+  border: 1px solid rgba(122, 215, 255, 0.2);
+  border-radius: 16px;
+  padding: 20px 24px;
+  width: min(520px, 90%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.end-modal h2 {
+  margin: 0 0 10px 0;
+  font-size: 20px;
+}
+
+.end-modal p {
+  margin: 8px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.end-link {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.end-link a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.end-link a:hover {
+  text-decoration: underline;
+}
+
+.end-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 .buttons {
   display: flex;
   gap: 8px;
