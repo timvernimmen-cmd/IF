@@ -461,6 +461,7 @@ class Agent {
     this.reservedSpot = null;
     this.trail = [];
     this.trailTimer = 0;
+    this.intentAfterArrival = "DRILL_THEN_FISH";
   }
   recentSuccess() {
     return this.recentSuccessTimer > 0;
@@ -526,6 +527,10 @@ class Simulation {
       agent.lastMoveDirectionAngle = angle;
       if (agent.isPlayer) {
         this.player = agent;
+        agent.state = STATE.DRILLING;
+        agent.drillTimer = PARAMS.drillTime;
+        agent.timeAtCurrentSpot = 0;
+        this.reserveHole(agent);
       } else {
         agent.destination = { x, y };
         agent.state = STATE.WALKING;
@@ -581,13 +586,15 @@ class Simulation {
     if (dist < 2) {
       agent.x = agent.destination.x;
       agent.y = agent.destination.y;
-      if (agent.isPlayer) {
-        agent.state = STATE.IDLE;
-      } else {
+      if (agent.intentAfterArrival === "DRILL_THEN_FISH") {
         this.reserveHole(agent);
         agent.state = STATE.DRILLING;
         agent.drillTimer = PARAMS.drillTime;
         agent.timeAtCurrentSpot = 0;
+      } else if (agent.isPlayer) {
+        agent.state = STATE.IDLE;
+      } else {
+        this.pickDestination(agent);
       }
       return;
     }
@@ -1007,6 +1014,22 @@ class Simulation {
       : projectInsideLake(snapped.x, snapped.y, PARAMS.lakeSafeInset);
   }
 
+  clampDestination(x, y) {
+    let candidate = isInsideLake(x, y) ? { x, y } : projectInsideLake(x, y, PARAMS.lakeSafeInset);
+    if (distanceToLakeEdge(candidate.x, candidate.y) < PARAMS.minShoreDist) {
+      const nearest = nearestPointOnPolygon(candidate.x, candidate.y);
+      candidate = {
+        x: nearest.x + nearest.nx * PARAMS.minShoreDist,
+        y: nearest.y + nearest.ny * PARAMS.minShoreDist,
+      };
+      if (!isInsideLake(candidate.x, candidate.y)) {
+        candidate = projectInsideLake(candidate.x, candidate.y, PARAMS.minShoreDist);
+      }
+    }
+    candidate = this.snapTargetOutsideHoles(candidate.x, candidate.y);
+    return candidate;
+  }
+
   countNearbyRecentSuccesses(agent) {
     return this.agents.filter((other) => {
       if (other.id === agent.id) return false;
@@ -1104,24 +1127,32 @@ function create() {
   this.input.on("pointerdown", (pointer) => {
     const player = getPlayer();
     if (!player) return;
-    if (player.state === STATE.DRILLING || player.state === STATE.FISHING) {
-      showStatus("Finish drilling or stop fishing before moving.");
+    if (pointer.x <= WORLD.leftUiWidth + WORLD.margin) {
       return;
     }
-    const target = pointer.event?.target;
-    if (
-      target?.closest?.("#ui-panel") ||
-      ["BUTTON", "INPUT", "LABEL", "SELECT", "TEXTAREA"].includes(target?.tagName)
-    ) {
+    const eventTarget = pointer.event?.target;
+    if (eventTarget?.closest?.("#hudColumn")) {
       return;
     }
-    if (!isInsideLake(pointer.x, pointer.y)) {
-      showStatus("Destination outside lake.");
+    const elementAtPoint = pointer.event
+      ? document.elementFromPoint(pointer.event.clientX, pointer.event.clientY)
+      : null;
+    if (elementAtPoint?.closest?.("#hudColumn")) {
       return;
     }
-    const snapped = sim.snapTargetOutsideHoles(pointer.x, pointer.y);
+    const snapped = sim.clampDestination(pointer.x, pointer.y);
+    if (player.state === STATE.DRILLING) {
+      sim.releaseReservation(player);
+      player.drillTimer = 0;
+    }
+    if (player.state === STATE.FISHING) {
+      player.hasHole = false;
+      player.hasCaughtHere = false;
+      player.timeAtCurrentSpot = 0;
+    }
     player.destination = { x: snapped.x, y: snapped.y };
     player.state = STATE.WALKING;
+    player.intentAfterArrival = "DRILL_THEN_FISH";
     player.moveCount += 1;
   });
 }
@@ -1164,25 +1195,9 @@ function renderScene(time) {
 }
 
 function drawLakeBackground() {
-  const world = worldRect();
-  const snowBase = 0xe9f4ff;
+  const snowBase = 0xf8fbff;
   graphics.fillStyle(snowBase, 1);
   graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
-  graphics.fillRect(world.x, world.y, world.w, world.h);
-  graphics.fillStyle(0xcfd9e6, 0.35);
-  graphics.fillRect(world.x, world.y, world.w, world.h);
-  for (let i = 0; i < 5; i += 1) {
-    const inset = i * 10;
-    const alpha = 0.08;
-    graphics.fillStyle(snowBase, alpha);
-    graphics.fillRoundedRect(
-      world.x + inset,
-      world.y + inset,
-      world.w - inset * 2,
-      world.h - inset * 2,
-      26
-    );
-  }
   if (lakePolygon.length > 2) {
     graphics.fillStyle(0x18324b, 1);
     graphics.beginPath();
@@ -1190,21 +1205,10 @@ function drawLakeBackground() {
     lakePolygon.slice(1).forEach((pt) => graphics.lineTo(pt.x, pt.y));
     graphics.closePath();
     graphics.fillPath();
+    graphics.lineStyle(10, 0xf0f6ff, 0.35);
+    graphics.strokePath();
     graphics.lineStyle(4, 0x79b4d6, 0.7);
     graphics.strokePath();
-  }
-  const gradientSteps = 8;
-  for (let i = 0; i < gradientSteps; i += 1) {
-    const alpha = 0.08;
-    const inset = 6 + i * 6;
-    graphics.fillStyle(0x21486b, alpha);
-    graphics.fillRoundedRect(
-      world.x + inset,
-      world.y + inset,
-      world.w - inset * 2,
-      world.h - inset * 2,
-      24
-    );
   }
   crackLines.forEach((line) => {
     if (isInsideLake(line.x1, line.y1) && isInsideLake(line.x2, line.y2)) {
@@ -1318,51 +1322,6 @@ function setupUI() {
   const seedInput = document.getElementById("seed-input");
   const seedReset = document.getElementById("seed-reset");
   const seedRandomize = document.getElementById("seed-randomize");
-
-  document.getElementById("drill-btn").addEventListener("click", () => {
-    const player = getPlayer();
-    if (!player) return;
-    if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
-    if (!sim.isHoleLocationValid(player.x, player.y)) {
-      const shoreDist = distanceToLakeEdge(player.x, player.y);
-      if (shoreDist < MIN_HOLE_SHORE_DIST) {
-        showStatus("Too close to shore (shallow/low yield).");
-      } else {
-        showStatus("Too close to another hole (ice stability). Move further away.");
-      }
-      return;
-    }
-    sim.reserveHole(player);
-    player.state = STATE.DRILLING;
-    player.drillTimer = PARAMS.drillTime;
-    player.timeAtCurrentSpot = 0;
-  });
-
-  document.getElementById("fish-btn").addEventListener("click", () => {
-    const player = getPlayer();
-    if (!player) return;
-    if (player.state === STATE.FISHING) return;
-    if (!player.hasHole) return;
-    if (player.state === STATE.WALKING || player.state === STATE.DRILLING) return;
-    const distance = Math.hypot(player.x - player.hole.x, player.y - player.hole.y);
-    if (distance > 6) return;
-    player.state = STATE.FISHING;
-  });
-
-  document.getElementById("stop-btn").addEventListener("click", () => {
-    const player = getPlayer();
-    if (!player) return;
-    if (player.state === STATE.DRILLING) {
-      player.state = STATE.IDLE;
-      player.drillTimer = 0;
-      sim.releaseReservation(player);
-      return;
-    }
-    if (player.state === STATE.FISHING) {
-      player.state = STATE.READY;
-      return;
-    }
-  });
 
   const applySeed = (nextSeed) => {
     const cleaned = nextSeed.trim();
