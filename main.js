@@ -287,6 +287,7 @@ class Simulation {
     this.reservations = [];
     this.catchEffects = [];
     this.successEvents = [];
+    this.globalSuccessSignal = null;
     this.player = null;
     this.simTime = 0;
     this.gutEvents = [];
@@ -411,6 +412,7 @@ class Simulation {
       this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
       this.spawnCatchEffects(agent);
       this.recordSuccessEvent(agent);
+      this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
         this.pushGutEvent("You caught a fish (pressure reset).", "success");
       } else {
@@ -477,6 +479,14 @@ class Simulation {
       this.successEvents.pop();
     }
   }
+  recordGlobalSuccessSignal(agent) {
+    this.globalSuccessSignal = {
+      x: agent.x,
+      y: agent.y,
+      t: this.simTime,
+      agentId: agent.id,
+    };
+  }
   notifyNeighborCatch(catchingAgent) {
     const player = this.player;
     const dx = catchingAgent.x - player.x;
@@ -504,6 +514,7 @@ class Simulation {
     const densityFactor = Math.min(1, localDensity / 6);
     const successBoost = Math.min(3, nearbyRecentSuccessCount);
     const socialTarget = this.getSocialTarget(agent);
+    const globalSignal = this.getGlobalSuccessSignal();
     let distanceMean;
     let turnRange;
     if (mode === MODE.SUCCESS_LOOP) {
@@ -518,6 +529,30 @@ class Simulation {
     let best = null;
     let bestScore = -Infinity;
     for (let i = 0; i < PARAMS.candidateCount; i += 1) {
+      if (i === 0 && mode === MODE.FAILURE_LINE && globalSignal) {
+        const failureSeverity = Math.min(1, agent.timeSinceLastCatch / 120);
+        const probability = Phaser.Math.Clamp(0.2 + 0.6 * failureSeverity, 0, 0.8);
+        if (this.rng.next() < probability) {
+          const jitter = this.rng.range(60, 140);
+          const angle = this.rng.range(0, Math.PI * 2);
+          const targetX = globalSignal.x + Math.cos(angle) * jitter;
+          const targetY = globalSignal.y + Math.sin(angle) * jitter;
+          if (
+            !this.isInForbidden(targetX, targetY) &&
+            this.isHoleLocationValid(targetX, targetY)
+          ) {
+            agent.destination = {
+              x: Phaser.Math.Clamp(targetX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin),
+              y: Phaser.Math.Clamp(targetY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin),
+            };
+            agent.lastMoveDirectionAngle = Math.atan2(
+              agent.destination.y - agent.y,
+              agent.destination.x - agent.x
+            );
+            return;
+          }
+        }
+      }
       const distance =
         distanceMean + this.rng.range(mode === MODE.SUCCESS_LOOP ? -8 : -20, mode === MODE.SUCCESS_LOOP ? 20 : 60);
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
@@ -656,6 +691,14 @@ class Simulation {
       weight: Math.min(1.5, totalWeight),
       radius,
     };
+  }
+  getGlobalSuccessSignal() {
+    if (!this.globalSuccessSignal) return null;
+    const age = this.simTime - this.globalSuccessSignal.t;
+    const halfLife = 180;
+    const strength = Math.exp((-Math.LN2 * age) / halfLife);
+    if (strength < 0.05) return null;
+    return { ...this.globalSuccessSignal, strength, age };
   }
 }
 
@@ -919,6 +962,24 @@ function setupUI() {
   });
   UI.timeScaleLabel.textContent = "(3h compressed to 10m)";
 
+  const panel = document.getElementById("ui-panel");
+  const stopEvents = (event) => {
+    event.stopPropagation();
+  };
+  const stopWheel = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+  };
+  panel?.addEventListener("pointerdown", stopEvents);
+  panel?.addEventListener("pointermove", stopEvents);
+  panel?.addEventListener("pointerup", stopEvents);
+  panel?.addEventListener("mousedown", stopEvents);
+  panel?.addEventListener("mousemove", stopEvents);
+  panel?.addEventListener("mouseup", stopEvents);
+  panel?.addEventListener("touchstart", stopEvents, { passive: false });
+  panel?.addEventListener("touchmove", stopWheel, { passive: false });
+  panel?.addEventListener("wheel", stopWheel, { passive: false });
+
   document.getElementById("show-gut").addEventListener("change", (event) => {
     uiState.showGut = event.target.checked;
     UI.gutPanel.classList.toggle("hidden", !uiState.showGut);
@@ -1020,6 +1081,7 @@ function updateGutPanel() {
   const pressure = 1 / (1 + Math.exp(-leaveScore));
   const mode = sim.getMovementMode(player);
   const socialTarget = sim.getSocialTarget(player);
+  const globalSignal = sim.getGlobalSuccessSignal();
   UI.gutPressure.textContent = pressure.toFixed(2);
   UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
   UI.gutAnchor.textContent = player.hasCaughtHere ? "ON" : "OFF";
@@ -1049,6 +1111,12 @@ function updateGutPanel() {
   socialTargetLine.textContent = `Social target: ${
     socialTarget ? `${Math.round(socialTarget.x)}, ${Math.round(socialTarget.y)}` : "none"
   }`;
+  const globalLine = document.createElement("div");
+  globalLine.textContent = `Global success signal: ${
+    globalSignal
+      ? `${globalSignal.strength.toFixed(2)} (age ${Math.round(globalSignal.age)}s)`
+      : "none"
+  }`;
   const breakdown = document.createElement("div");
   breakdown.textContent = `Pressure = sigmoid(${timeTerm.toFixed(2)} - ${anchorBonus.toFixed(
     2
@@ -1059,6 +1127,7 @@ function updateGutPanel() {
   UI.gutEvents.appendChild(densityLine);
   UI.gutEvents.appendChild(successLine);
   UI.gutEvents.appendChild(socialTargetLine);
+  UI.gutEvents.appendChild(globalLine);
   UI.gutEvents.appendChild(breakdown);
   UI.gutEvents.appendChild(detail);
 }
