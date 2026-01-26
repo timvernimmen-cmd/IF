@@ -16,7 +16,9 @@ const PARAMS = {
   fishGridRows: 50,
   neighborRadius: 60,
   leaveCrowdEffect: 0.12,
-  moveSpeed: 55,
+  npcSpeedMin: 60,
+  npcSpeedMax: 120,
+  playerSpeed: 130,
   successWindow: 60,
   explorationWeight: 0.25,
   inertiaWeight: 0.4,
@@ -24,6 +26,7 @@ const PARAMS = {
   maxMoveDistance: 220,
   minMoveDistance: 30,
   sessionHours: 3,
+  mapMargin: 14,
 };
 
 const STATE = {
@@ -199,7 +202,7 @@ class Agent {
     this.isPlayer = isPlayer;
     this.state = STATE.FISHING;
     this.destination = { x, y };
-    this.speed = PARAMS.moveSpeed;
+    this.speed = PARAMS.playerSpeed;
     this.catchesTotal = 0;
     this.timeSinceLastCatch = 0;
     this.hasCaughtHere = false;
@@ -212,6 +215,7 @@ class Agent {
     this.moveCount = 0;
     this.timeMoving = 0;
     this.timeFishing = 0;
+    this.lastPosition = { x, y };
   }
   recentSuccess() {
     return this.recentSuccessTimer > 0;
@@ -237,6 +241,17 @@ class Simulation {
     this.sessionDuration = params.sessionHours * 3600;
     this.occupancy = new Array(params.fishGridCols * params.fishGridRows).fill(0);
     this.clusterSamples = [];
+    this.speedStats = {
+      playerDistance: 0,
+      npcDistance: 0,
+      playerTime: 0,
+      npcTime: 0,
+      playerSpeed: 0,
+      npcSpeed: 0,
+      oobCandidates: 0,
+      oobRate: 0,
+      oobTimer: 0,
+    };
     this.initializeAgents();
   }
   initializeAgents() {
@@ -246,10 +261,21 @@ class Simulation {
     for (let i = 0; i < this.params.npcCount + 1; i += 1) {
       const angle = this.rng.range(0, Math.PI * 2);
       const radius = this.rng.range(20, 160);
-      const x = Phaser.Math.Clamp(centerX + Math.cos(angle) * radius, 10, this.params.width - 10);
-      const y = Phaser.Math.Clamp(centerY + Math.sin(angle) * radius, 10, this.params.height - 10);
+      const x = Phaser.Math.Clamp(
+        centerX + Math.cos(angle) * radius,
+        PARAMS.mapMargin,
+        this.params.width - PARAMS.mapMargin
+      );
+      const y = Phaser.Math.Clamp(
+        centerY + Math.sin(angle) * radius,
+        PARAMS.mapMargin,
+        this.params.height - PARAMS.mapMargin
+      );
       const agent = new Agent(i, x, y, i === 0);
       agent.lastMoveDirectionAngle = angle;
+      agent.speed = agent.isPlayer
+        ? PARAMS.playerSpeed
+        : this.rng.range(PARAMS.npcSpeedMin, PARAMS.npcSpeedMax);
       if (i === 0) {
         this.player = agent;
       }
@@ -267,6 +293,7 @@ class Simulation {
     this.agents.forEach((agent) => this.updateAgent(agent, dt));
     this.recordOccupancy();
     this.recordClusterSample();
+    this.updateSpeedStats(dt);
   }
   recordOccupancy() {
     this.agents.forEach((agent) => {
@@ -303,6 +330,8 @@ class Simulation {
         const step = Math.min(dist, agent.speed * dt);
         agent.x += (dx / dist) * step;
         agent.y += (dy / dist) * step;
+        agent.x = Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
+        agent.y = Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
       }
     } else {
       agent.timeFishing += dt;
@@ -317,6 +346,7 @@ class Simulation {
         agent.trail.shift();
       }
     }
+    this.trackSpeed(agent, dt);
   }
   updateFishing(agent, dt) {
     const localDensity = this.spatialHash.countWithin(
@@ -348,6 +378,36 @@ class Simulation {
       this.pickDestination(agent);
     }
   }
+  trackSpeed(agent, dt) {
+    const dx = agent.x - agent.lastPosition.x;
+    const dy = agent.y - agent.lastPosition.y;
+    const dist = Math.hypot(dx, dy);
+    if (agent.isPlayer) {
+      this.speedStats.playerDistance += dist;
+      this.speedStats.playerTime += dt;
+    } else {
+      this.speedStats.npcDistance += dist;
+      this.speedStats.npcTime += dt;
+    }
+    agent.lastPosition.x = agent.x;
+    agent.lastPosition.y = agent.y;
+  }
+  updateSpeedStats(dt) {
+    this.speedStats.oobTimer += dt;
+    if (this.speedStats.playerTime > 0) {
+      this.speedStats.playerSpeed =
+        this.speedStats.playerDistance / this.speedStats.playerTime;
+    }
+    if (this.speedStats.npcTime > 0) {
+      this.speedStats.npcSpeed = this.speedStats.npcDistance / this.speedStats.npcTime;
+    }
+    if (this.speedStats.oobTimer >= 1) {
+      this.speedStats.oobRate =
+        this.speedStats.oobCandidates / Math.max(1, this.speedStats.oobTimer);
+      this.speedStats.oobCandidates = 0;
+      this.speedStats.oobTimer = 0;
+    }
+  }
   pickDestination(agent) {
     const recentSuccess = agent.recentSuccess();
     const failureFactor = Math.min(1, agent.timeSinceLastCatch / 240);
@@ -361,15 +421,26 @@ class Simulation {
       const distance = distanceMean + this.rng.range(-20, 40);
       const angle =
         agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
+      const rawX = agent.x + Math.cos(angle) * distance;
+      const rawY = agent.y + Math.sin(angle) * distance;
+      if (
+        rawX < PARAMS.mapMargin ||
+        rawY < PARAMS.mapMargin ||
+        rawX > this.params.width - PARAMS.mapMargin ||
+        rawY > this.params.height - PARAMS.mapMargin
+      ) {
+        this.speedStats.oobCandidates += 1;
+        continue;
+      }
       const x = Phaser.Math.Clamp(
-        agent.x + Math.cos(angle) * distance,
-        10,
-        this.params.width - 10
+        rawX,
+        PARAMS.mapMargin,
+        this.params.width - PARAMS.mapMargin
       );
       const y = Phaser.Math.Clamp(
-        agent.y + Math.sin(angle) * distance,
-        10,
-        this.params.height - 10
+        rawY,
+        PARAMS.mapMargin,
+        this.params.height - PARAMS.mapMargin
       );
       const neighborCount = this.spatialHash.countWithin(x, y, PARAMS.neighborRadius, agent.id);
       const socialScore = Math.min(1, neighborCount / 8);
@@ -382,6 +453,9 @@ class Simulation {
         PARAMS.socialStrength * socialScore * conditionalMultiplier +
         PARAMS.explorationWeight * explorationScore +
         PARAMS.inertiaWeight * inertiaScore;
+      if (!Number.isFinite(score)) {
+        continue;
+      }
       if (score > bestScore) {
         bestScore = score;
         best = { x, y, angle };
@@ -393,6 +467,11 @@ class Simulation {
       const moveDist = Math.hypot(agent.destination.x - agent.x, agent.destination.y - agent.y);
       agent.moveDistanceTotal += moveDist;
       agent.moveCount += 1;
+    } else {
+      agent.destination = {
+        x: Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, this.params.width - PARAMS.mapMargin),
+        y: Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, this.params.height - PARAMS.mapMargin),
+      };
     }
   }
 }
@@ -403,6 +482,7 @@ class UISystem {
     this.showFish = false;
     this.showTrails = true;
     this.showLabels = false;
+    this.showDebug = false;
     this.freeze = false;
     this.step = false;
     this.autopilot = false;
@@ -450,8 +530,16 @@ function create() {
   resetSimulation();
   this.input.on("pointerdown", (pointer) => {
     if (uiState.autopilot) return;
-    const x = Phaser.Math.Clamp(pointer.x, 10, PARAMS.width - 10);
-    const y = Phaser.Math.Clamp(pointer.y, 10, PARAMS.height - 10);
+    const x = Phaser.Math.Clamp(
+      pointer.x,
+      PARAMS.mapMargin,
+      PARAMS.width - PARAMS.mapMargin
+    );
+    const y = Phaser.Math.Clamp(
+      pointer.y,
+      PARAMS.mapMargin,
+      PARAMS.height - PARAMS.mapMargin
+    );
     sim.player.destination = { x, y };
     sim.player.state = STATE.WALKING;
   });
@@ -462,7 +550,7 @@ function update(time) {
   if (!lastFrameTime) lastFrameTime = time;
   const rawDt = (time - lastFrameTime) / 1000;
   lastFrameTime = time;
-  const dt = rawDt * PARAMS.timeScale;
+  const dt = Math.min(rawDt, 0.05) * PARAMS.timeScale;
   if (!uiState.freeze || uiState.step) {
     sim.update(dt);
     if (uiState.step) {
@@ -564,11 +652,19 @@ function setupUI() {
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
   UI.gut = document.getElementById("player-gut");
+  UI.debugPanel = document.getElementById("debug-panel");
+  UI.debugPlayerSpeed = document.getElementById("debug-player-speed");
+  UI.debugNpcSpeed = document.getElementById("debug-npc-speed");
+  UI.debugOob = document.getElementById("debug-oob");
 
   bindToggle("show-density", (val) => (uiState.showDensity = val));
   bindToggle("show-fish", (val) => (uiState.showFish = val));
   bindToggle("show-trails", (val) => (uiState.showTrails = val), true);
   bindToggle("show-labels", (val) => (uiState.showLabels = val));
+  bindToggle("show-debug", (val) => {
+    uiState.showDebug = val;
+    UI.debugPanel.classList.toggle("hidden", !val);
+  });
   bindToggle("freeze-toggle", (val) => (uiState.freeze = val));
   bindToggle("autopilot-toggle", (val) => (uiState.autopilot = val));
 
@@ -671,6 +767,11 @@ function updateHUD() {
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
   UI.gut.textContent = `${Math.floor(sim.player.timeSinceLastCatch)}s`;
+  if (uiState.showDebug) {
+    UI.debugPlayerSpeed.textContent = sim.speedStats.playerSpeed.toFixed(1);
+    UI.debugNpcSpeed.textContent = sim.speedStats.npcSpeed.toFixed(1);
+    UI.debugOob.textContent = sim.speedStats.oobRate.toFixed(1);
+  }
 }
 
 function estimateRank(playerCatches) {
