@@ -1,16 +1,16 @@
 const PARAMS = {
   width: 860,
   height: 540,
-  mapMargin: 16,
+  mapMargin: 0,
   npcCount: 9,
-  npcSpeed: 25,
-  playerSpeed: 30,
+  npcSpeed: 22,
+  playerSpeed: 26,
   drillTime: 5,
-  baseCatchRate: 0.06,
+  baseCatchRate: 0.035,
   holeRadius: 7,
   minHoleSpacing: 30,
   minDwell: 20,
-  targetDwell: 40,
+  targetDwell: 35,
   leaveCheckInterval: 10,
   fishGridCols: 80,
   fishGridRows: 50,
@@ -35,10 +35,23 @@ const PARAMS = {
   socialCueWeight: 0.2,
   gutTau: 100,
   neighborSuccessSuppress: 40,
-  forbiddenZone: { x: 0, y: 0, w: 320, h: 330 },
+  forbiddenZone: { x: 0, y: 0, w: 0, h: 0 },
   devMode: false,
   seed: "ice-lake-01",
 };
+
+const WORLD = {
+  leftUiWidth: 300,
+  margin: 12,
+};
+
+function worldRect() {
+  const x = WORLD.leftUiWidth + WORLD.margin;
+  const y = WORLD.margin;
+  const w = PARAMS.width - x - WORLD.margin;
+  const h = PARAMS.height - WORLD.margin * 2;
+  return { x, y, w, h };
+}
 
 const STATE = {
   IDLE: "IDLE",
@@ -147,11 +160,13 @@ class SpatialHash {
 }
 
 class FishField {
-  constructor(cols, rows, width, height, rng) {
+  constructor(cols, rows, width, height, offsetX, offsetY, rng) {
     this.cols = cols;
     this.rows = rows;
     this.width = width;
     this.height = height;
+    this.offsetX = offsetX;
+    this.offsetY = offsetY;
     this.rng = rng;
     this.grid = new Array(cols * rows).fill(0);
     this.baseline = new Array(cols * rows).fill(0);
@@ -166,8 +181,8 @@ class FishField {
     const basins = Math.max(3, Math.floor(PARAMS.patchiness * 0.6));
     const sigma = Math.min(this.width, this.height) * 0.25;
     const centers = Array.from({ length: basins }, () => ({
-      x: this.rng.range(PARAMS.mapMargin, this.width - PARAMS.mapMargin),
-      y: this.rng.range(PARAMS.mapMargin, this.height - PARAMS.mapMargin),
+      x: this.rng.range(0, this.width),
+      y: this.rng.range(0, this.height),
       depth: this.rng.range(0.4, 1.0),
     }));
     for (let row = 0; row < this.rows; row += 1) {
@@ -213,20 +228,30 @@ class FishField {
     }
   }
   sample(x, y) {
-    const col = Math.max(0, Math.min(this.cols - 1, Math.floor((x / this.width) * this.cols)));
-    const row = Math.max(0, Math.min(this.rows - 1, Math.floor((y / this.height) * this.rows)));
+    const localX = x - this.offsetX;
+    const localY = y - this.offsetY;
+    const col = Math.max(
+      0,
+      Math.min(this.cols - 1, Math.floor((localX / this.width) * this.cols))
+    );
+    const row = Math.max(
+      0,
+      Math.min(this.rows - 1, Math.floor((localY / this.height) * this.rows))
+    );
     return this.grid[this.index(col, row)];
   }
   deplete(x, y, amount, radius) {
-    const colCenter = Math.floor((x / this.width) * this.cols);
-    const rowCenter = Math.floor((y / this.height) * this.rows);
+    const localX = x - this.offsetX;
+    const localY = y - this.offsetY;
+    const colCenter = Math.floor((localX / this.width) * this.cols);
+    const rowCenter = Math.floor((localY / this.height) * this.rows);
     const radiusCols = Math.ceil((radius / this.width) * this.cols);
     const radiusRows = Math.ceil((radius / this.height) * this.rows);
     for (let row = rowCenter - radiusRows; row <= rowCenter + radiusRows; row += 1) {
       for (let col = colCenter - radiusCols; col <= colCenter + radiusCols; col += 1) {
         if (row < 0 || col < 0 || row >= this.rows || col >= this.cols) continue;
-        const dx = ((col + 0.5) / this.cols) * this.width - x;
-        const dy = ((row + 0.5) / this.rows) * this.height - y;
+        const dx = ((col + 0.5) / this.cols) * this.width - localX;
+        const dy = ((row + 0.5) / this.rows) * this.height - localY;
         const dist2 = dx * dx + dy * dy;
         const falloff = Math.exp(-dist2 / (2 * radius * radius));
         const idx = this.index(col, row);
@@ -264,6 +289,8 @@ class Agent {
     this.gutTimer = 0;
     this.anchorUntil = 0;
     this.suppressLeaveUntil = 0;
+    this.nextDecisionAt = 0;
+    this.moveCount = 0;
     this.hasHole = false;
     this.hole = null;
     this.reservedSpot = null;
@@ -279,11 +306,14 @@ class Simulation {
   constructor(scene, rng) {
     this.scene = scene;
     this.rng = rng;
+    const world = worldRect();
     this.fishField = new FishField(
       PARAMS.fishGridCols,
       PARAMS.fishGridRows,
-      PARAMS.width,
-      PARAMS.height,
+      world.w,
+      world.h,
+      world.x,
+      world.y,
       rng
     );
     this.spatialHash = new SpatialHash(60, PARAMS.width, PARAMS.height);
@@ -378,19 +408,26 @@ class Simulation {
       return;
     }
     const step = Math.min(dist, agent.speed * dt);
-    const nextX = agent.x + (dx / dist) * step;
-    const nextY = agent.y + (dy / dist) * step;
-    if (this.isInForbidden(nextX, nextY)) {
+    let nextX = agent.x + (dx / dist) * step;
+    let nextY = agent.y + (dy / dist) * step;
+    if (!this.isInsideLake(nextX, nextY)) {
       if (agent.isPlayer) {
         agent.state = STATE.IDLE;
-        showStatus("Move outside the HUD area to continue.");
+        showStatus("Move within the lake boundary.");
       } else {
-        this.pickDestination(agent);
+        const adjusted = this.slideAlongBoundary(agent, dx, dy, step);
+        if (adjusted) {
+          nextX = adjusted.x;
+          nextY = adjusted.y;
+        } else {
+          this.pickDestination(agent);
+          return;
+        }
       }
       return;
     }
-    agent.x = Phaser.Math.Clamp(nextX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
-    agent.y = Phaser.Math.Clamp(nextY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+    agent.x = nextX;
+    agent.y = nextY;
   }
   updateDrilling(agent, dt) {
     agent.drillTimer = Math.max(0, agent.drillTimer - dt);
@@ -400,6 +437,9 @@ class Simulation {
       agent.hasHole = true;
       agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
       this.holes.push(agent.hole);
+      if (!agent.isPlayer) {
+        agent.nextDecisionAt = this.simTime + this.rng.range(20, 33);
+      }
     }
   }
   updateFishing(agent, dt) {
@@ -431,6 +471,9 @@ class Simulation {
         return;
       }
       if (this.simTime < agent.suppressLeaveUntil) {
+        return;
+      }
+      if (this.simTime < agent.nextDecisionAt) {
         return;
       }
       if (agent.leaveCheckTimer < PARAMS.leaveCheckInterval) {
@@ -466,6 +509,11 @@ class Simulation {
         agent.hasHole = false;
         agent.hole = null;
         this.pickDestination(agent);
+        agent.nextDecisionAt =
+          this.simTime + (mode === MODE.SUCCESS_LOOP ? this.rng.range(10, 20) : this.rng.range(13, 20));
+      } else {
+        agent.nextDecisionAt =
+          this.simTime + (mode === MODE.SUCCESS_LOOP ? this.rng.range(10, 20) : this.rng.range(13, 20));
       }
     }
   }
@@ -570,19 +618,11 @@ class Simulation {
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
-      if (this.isInForbidden(rawX, rawY)) {
+      if (!this.isInsideLake(rawX, rawY)) {
         continue;
       }
-      if (
-        rawX < PARAMS.mapMargin ||
-        rawY < PARAMS.mapMargin ||
-        rawX > PARAMS.width - PARAMS.mapMargin ||
-        rawY > PARAMS.height - PARAMS.mapMargin
-      ) {
-        continue;
-      }
-      const x = Phaser.Math.Clamp(rawX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
-      const y = Phaser.Math.Clamp(rawY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+      const x = rawX;
+      const y = rawY;
       const neighborCount = this.spatialHash.countWithin(x, y, PARAMS.neighborRadius, agent.id);
       const socialScore = Math.min(1, neighborCount / 8);
       const explorationScore = this.rng.next();
@@ -615,10 +655,11 @@ class Simulation {
     if (best) {
       agent.destination = { x: best.x, y: best.y };
       agent.lastMoveDirectionAngle = best.angle;
+      agent.moveCount += 1;
     }
   }
   isHoleLocationValid(x, y) {
-    if (this.isInForbidden(x, y)) {
+    if (!this.isInsideLake(x, y)) {
       return false;
     }
     const minDist = PARAMS.minHoleSpacing;
@@ -650,14 +691,41 @@ class Simulation {
       this.gutEvents.pop();
     }
   }
-  isInForbidden(x, y) {
-    const zone = PARAMS.forbiddenZone;
-    return (
-      x >= zone.x &&
-      x <= zone.x + zone.w &&
-      y >= zone.y &&
-      y <= zone.y + zone.h
-    );
+  isInsideLake(x, y) {
+    if (!this.isInsideWorld(x, y)) {
+      return false;
+    }
+    if (lakePolygon.length < 3) return true;
+    let inside = false;
+    for (let i = 0, j = lakePolygon.length - 1; i < lakePolygon.length; j = i, i += 1) {
+      const xi = lakePolygon[i].x;
+      const yi = lakePolygon[i].y;
+      const xj = lakePolygon[j].x;
+      const yj = lakePolygon[j].y;
+      const intersect =
+        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+  isInsideWorld(x, y) {
+    const world = worldRect();
+    return x >= world.x && x <= world.x + world.w && y >= world.y && y <= world.y + world.h;
+  }
+  slideAlongBoundary(agent, dx, dy, step) {
+    const baseAngle = Math.atan2(dy, dx);
+    const attempts = [15, -15, 30, -30, 45, -45];
+    for (const offset of attempts) {
+      const angle = baseAngle + Phaser.Math.DegToRad(offset);
+      const candidate = {
+        x: agent.x + Math.cos(angle) * step,
+        y: agent.y + Math.sin(angle) * step,
+      };
+      if (this.isInsideLake(candidate.x, candidate.y)) {
+        return candidate;
+      }
+    }
+    return null;
   }
   countNearbyRecentSuccesses(agent) {
     return this.agents.filter((other) => {
@@ -740,6 +808,7 @@ let lastDt = 0;
 let rng;
 let crackLines = [];
 let statusTimeout;
+let lakePolygon = [];
 
 function preload() {}
 
@@ -761,14 +830,15 @@ function create() {
     ) {
       return;
     }
-    if (sim.isInForbidden(pointer.x, pointer.y)) {
-      showStatus("Destination blocked by HUD area.");
+    if (!sim.isInsideLake(pointer.x, pointer.y)) {
+      showStatus("Destination outside lake.");
       return;
     }
-    const x = Phaser.Math.Clamp(pointer.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
-    const y = Phaser.Math.Clamp(pointer.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+    const x = pointer.x;
+    const y = pointer.y;
     player.destination = { x, y };
     player.state = STATE.WALKING;
+    player.moveCount += 1;
   });
 }
 
@@ -810,18 +880,29 @@ function renderScene(time) {
 }
 
 function drawLakeBackground() {
-  graphics.fillStyle(0x18324b, 1);
+  const world = worldRect();
+  graphics.fillStyle(0x0f1724, 1);
   graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
+  if (lakePolygon.length > 2) {
+    graphics.fillStyle(0x18324b, 1);
+    graphics.beginPath();
+    graphics.moveTo(lakePolygon[0].x, lakePolygon[0].y);
+    lakePolygon.slice(1).forEach((pt) => graphics.lineTo(pt.x, pt.y));
+    graphics.closePath();
+    graphics.fillPath();
+    graphics.lineStyle(4, 0x79b4d6, 0.7);
+    graphics.strokePath();
+  }
   const gradientSteps = 8;
   for (let i = 0; i < gradientSteps; i += 1) {
     const alpha = 0.08;
-    const inset = 10 + i * 8;
+    const inset = 6 + i * 6;
     graphics.fillStyle(0x21486b, alpha);
     graphics.fillRoundedRect(
-      inset,
-      inset,
-      PARAMS.width - inset * 2,
-      PARAMS.height - inset * 2,
+      world.x + inset,
+      world.y + inset,
+      world.w - inset * 2,
+      world.h - inset * 2,
       24
     );
   }
@@ -924,6 +1005,7 @@ function setupUI() {
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
   UI.debugState = document.getElementById("debug-state");
+  UI.statsLine = document.getElementById("stats-line");
   UI.gutPanel = document.getElementById("gut-panel");
   UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
@@ -1012,9 +1094,10 @@ function resetSimulation() {
   if (UI.errorBanner) {
     UI.errorBanner.classList.add("hidden");
   }
+  const world = worldRect();
   crackLines = Array.from({ length: 35 }, () => {
-    const x1 = rng.range(40, PARAMS.width - 40);
-    const y1 = rng.range(40, PARAMS.height - 40);
+    const x1 = rng.range(world.x + 20, world.x + world.w - 20);
+    const y1 = rng.range(world.y + 20, world.y + world.h - 20);
     const length = rng.range(80, 200);
     const angle = rng.range(0, Math.PI * 2);
     return {
@@ -1024,7 +1107,26 @@ function resetSimulation() {
       y2: y1 + Math.sin(angle) * length,
     };
   });
+  lakePolygon = generateLakePolygon();
   lastFrameTime = 0;
+}
+
+function generateLakePolygon() {
+  const world = worldRect();
+  const cx = world.x + world.w * 0.5;
+  const cy = world.y + world.h * 0.5;
+  const rx = world.w * 0.45;
+  const ry = world.h * 0.42;
+  const points = [];
+  const count = 20;
+  for (let i = 0; i < count; i += 1) {
+    const angle = (Math.PI * 2 * i) / count;
+    const noise = rng.range(-0.08, 0.08);
+    const x = cx + Math.cos(angle) * rx * (1 + noise);
+    const y = cy + Math.sin(angle) * ry * (1 + noise);
+    points.push({ x, y });
+  }
+  return points;
 }
 
 function getPlayer() {
@@ -1061,6 +1163,15 @@ function updateHUD() {
     UI.debugState.textContent = `State: ${sim.player.state} | Hole: ${
       sim.player.hasHole ? "yes" : "no"
     }`;
+  }
+  if (UI.statsLine) {
+    const totalMoves = sim.agents.reduce((sum, agent) => sum + agent.moveCount, 0);
+    const totalCatches = sim.agents.reduce((sum, agent) => sum + agent.catchesTotal, 0);
+    const totalHoles = sim.holes.length;
+    const agentCount = sim.agents.length;
+    UI.statsLine.textContent = `Moves: ${(totalMoves / agentCount).toFixed(1)} | Holes: ${(
+      totalHoles / agentCount
+    ).toFixed(1)} | Catches: ${(totalCatches / agentCount).toFixed(1)}`;
   }
   if (uiState.showGut) {
     updateGutPanel();
