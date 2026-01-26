@@ -41,6 +41,8 @@ body {
 
 #game canvas {
   display: block;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 #overlay {
@@ -50,7 +52,9 @@ body {
   flex-direction: column;
   gap: 12px;
   pointer-events: none;
-  z-index: 3;
+  z-index: 10;
+  align-items: flex-start;
+  padding: 16px;
 }
 
 .hud,
@@ -69,8 +73,12 @@ body {
   color: var(--muted);
 }
 
+.debug-state {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .controls {
-  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;

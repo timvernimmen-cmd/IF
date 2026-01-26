@@ -738,6 +738,7 @@ function setupUI() {
   UI.timeScaleLabel = document.getElementById("time-scale-label");
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
+  UI.debugState = document.getElementById("debug-state");
   UI.gutPanel = document.getElementById("gut-panel");
   UI.gutPressure = document.getElementById("gut-pressure");
   UI.gutTime = document.getElementById("gut-time");
@@ -843,6 +844,11 @@ function updateHUD() {
   UI.timer.textContent = `${min}:${sec}`;
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
+  if (UI.debugState) {
+    UI.debugState.textContent = `State: ${sim.player.state} | Hole: ${
+      sim.player.hasHole ? "yes" : "no"
+    }`;
+  }
   if (uiState.showGut) {
     updateGutPanel();
   }
