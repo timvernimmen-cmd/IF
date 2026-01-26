@@ -1168,10 +1168,14 @@ const clickMarkers = [];
 
 const config = {
   type: Phaser.CANVAS,
-  width: PARAMS.width,
-  height: PARAMS.height,
   parent: "game",
   backgroundColor: "#1a2d45",
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: PARAMS.width,
+    height: PARAMS.height,
+  },
   scene: {
     preload,
     create,
@@ -1194,8 +1198,10 @@ function preload() {}
 
 function create() {
   graphics = this.add.graphics();
-  resetSimulation();
   setupUI();
+  resetSimulation();
+  resizeGame();
+  this.input.addPointer(1);
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
     console.log("POINTERDOWN raw", pointer.x, pointer.y);
@@ -1221,6 +1227,19 @@ function create() {
     });
   }
 }
+
+function resizeGame() {
+  const container = document.getElementById("game");
+  if (!container) return;
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  game.scale.resize(PARAMS.width, PARAMS.height);
+  game.scale.setZoom(Math.min(w / PARAMS.width, h / PARAMS.height));
+  game.scale.refresh();
+}
+
+window.addEventListener("resize", resizeGame);
+window.addEventListener("orientationchange", resizeGame);
 
 function update(time) {
   if (!sim) return;
