@@ -7,8 +7,13 @@ const PARAMS = {
   playerSpeed: 26,
   drillTime: 5,
   baseCatchRate: 0.035,
-  holeRadius: 7,
+  holeRadius: 2,
+  holeRingRadius: 4,
+  holeClearance: 8,
+  holeMinSpacing: 12,
   minHoleSpacing: 30,
+  minShoreDist: 24,
+  lakeSafeInset: 8,
   minDwell: 20,
   targetDwell: 35,
   leaveCheckInterval: 10,
@@ -113,11 +118,103 @@ function distanceToLakeEdge(x, y) {
   return minDist;
 }
 
+function lakeCentroid() {
+  if (lakePolygon.length === 0) {
+    return { x: PARAMS.width * 0.5, y: PARAMS.height * 0.5 };
+  }
+  const sum = lakePolygon.reduce(
+    (acc, point) => {
+      acc.x += point.x;
+      acc.y += point.y;
+      return acc;
+    },
+    { x: 0, y: 0 }
+  );
+  return { x: sum.x / lakePolygon.length, y: sum.y / lakePolygon.length };
+}
+
+function polygonArea() {
+  if (lakePolygon.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < lakePolygon.length; i += 1) {
+    const j = (i + 1) % lakePolygon.length;
+    area += lakePolygon[i].x * lakePolygon[j].y - lakePolygon[j].x * lakePolygon[i].y;
+  }
+  return area * 0.5;
+}
+
+function nearestPointOnPolygon(x, y) {
+  if (lakePolygon.length < 2) return { x, y, nx: 0, ny: -1 };
+  const area = polygonArea();
+  const isCounterClockwise = area > 0;
+  let closest = { x, y, nx: 0, ny: -1 };
+  let minDistSq = Infinity;
+  for (let i = 0; i < lakePolygon.length; i += 1) {
+    const j = (i + 1) % lakePolygon.length;
+    const ax = lakePolygon[i].x;
+    const ay = lakePolygon[i].y;
+    const bx = lakePolygon[j].x;
+    const by = lakePolygon[j].y;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let t = 0;
+    if (lenSq > 0) {
+      t = ((x - ax) * dx + (y - ay) * dy) / lenSq;
+      t = Phaser.Math.Clamp(t, 0, 1);
+    }
+    const px = ax + t * dx;
+    const py = ay + t * dy;
+    const distSq = (x - px) ** 2 + (y - py) ** 2;
+    if (distSq < minDistSq) {
+      const nx = isCounterClockwise ? -dy : dy;
+      const ny = isCounterClockwise ? dx : -dx;
+      const nLen = Math.hypot(nx, ny) || 1;
+      closest = { x: px, y: py, nx: nx / nLen, ny: ny / nLen };
+      minDistSq = distSq;
+    }
+  }
+  return closest;
+}
+
+function projectInsideLake(x, y, inset = PARAMS.lakeSafeInset) {
+  if (isInsideLake(x, y)) {
+    return { x, y };
+  }
+  const nearest = nearestPointOnPolygon(x, y);
+  let candidate = {
+    x: nearest.x + nearest.nx * inset,
+    y: nearest.y + nearest.ny * inset,
+  };
+  if (!isInsideLake(candidate.x, candidate.y)) {
+    candidate = {
+      x: nearest.x - nearest.nx * inset,
+      y: nearest.y - nearest.ny * inset,
+    };
+  }
+  return candidate;
+}
+
 function shoreMultiplier(distance) {
   if (distance <= SHORE_NOFISH) return 0;
   if (distance >= SHORE_FADE) return 1;
   const t = (distance - SHORE_NOFISH) / (SHORE_FADE - SHORE_NOFISH);
   return t * t * (3 - 2 * t);
+}
+
+function nearestHoleDistanceSquared(x, y, holes) {
+  let minDistSq = Infinity;
+  let nearest = null;
+  holes.forEach((hole) => {
+    const dx = x - hole.x;
+    const dy = y - hole.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < minDistSq) {
+      minDistSq = distSq;
+      nearest = hole;
+    }
+  });
+  return { minDistSq, nearest };
 }
 
 const STATE = {
@@ -426,6 +523,13 @@ class Simulation {
     this.spatialHash.clear();
     this.agents.forEach((agent) => this.spatialHash.insert(agent));
   }
+  getHoleObstacles() {
+    return [...this.holes, ...this.reservations];
+  }
+  isPointTooCloseToHole(x, y, clearance = PARAMS.holeClearance) {
+    const { minDistSq } = nearestHoleDistanceSquared(x, y, this.getHoleObstacles());
+    return minDistSq < clearance * clearance;
+  }
   update(dt) {
     this.simTime += dt;
     this.updateSpatialHash();
@@ -443,6 +547,8 @@ class Simulation {
     } else if (agent.state === STATE.FISHING) {
       this.updateFishing(agent, dt);
     }
+
+    this.enforceLakeConstraint(agent);
 
     agent.trailTimer += dt;
     if (agent.trailTimer > 1) {
@@ -477,12 +583,26 @@ class Simulation {
     const step = Math.min(dist, agent.speed * dt);
     let nextX = agent.x + (dx / dist) * step;
     let nextY = agent.y + (dy / dist) * step;
+    if (this.isPointTooCloseToHole(nextX, nextY)) {
+      const adjusted = this.findHoleAdjustedStep(agent, Math.atan2(dy, dx), step);
+      if (adjusted) {
+        nextX = adjusted.x;
+        nextY = adjusted.y;
+      } else if (agent.isPlayer) {
+        agent.state = STATE.IDLE;
+        showStatus("Too close to a hole. Choose another path.");
+        return;
+      } else {
+        this.pickDestination(agent);
+        return;
+      }
+    }
     if (!isInsideLake(nextX, nextY)) {
       if (agent.isPlayer) {
         agent.state = STATE.IDLE;
         showStatus("Move within the lake boundary.");
       } else {
-        const adjusted = this.slideAlongBoundary(agent, dx, dy, step);
+        const adjusted = this.turnInwardStep(agent, Math.atan2(dy, dx), step);
         if (adjusted) {
           nextX = adjusted.x;
           nextY = adjusted.y;
@@ -666,10 +786,7 @@ class Simulation {
           const angle = this.rng.range(0, Math.PI * 2);
           const targetX = globalSignal.x + Math.cos(angle) * jitter;
           const targetY = globalSignal.y + Math.sin(angle) * jitter;
-          if (
-            !isInForbidden(targetX, targetY) &&
-            this.isHoleLocationValid(targetX, targetY)
-          ) {
+          if (this.isDestinationValid(targetX, targetY)) {
             agent.destination = {
               x: Phaser.Math.Clamp(targetX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin),
               y: Phaser.Math.Clamp(targetY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin),
@@ -688,7 +805,7 @@ class Simulation {
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
-      if (!isInsideLake(rawX, rawY)) {
+      if (!this.isDestinationValid(rawX, rawY)) {
         continue;
       }
       const x = rawX;
@@ -732,6 +849,13 @@ class Simulation {
       agent.destination = { x: best.x, y: best.y };
       agent.lastMoveDirectionAngle = best.angle;
       agent.moveCount += 1;
+    } else {
+      agent.destination = this.randomPointInsideLake();
+      agent.lastMoveDirectionAngle = Math.atan2(
+        agent.destination.y - agent.y,
+        agent.destination.x - agent.x
+      );
+      agent.moveCount += 1;
     }
   }
   isHoleLocationValid(x, y) {
@@ -741,13 +865,14 @@ class Simulation {
     if (distanceToLakeEdge(x, y) < MIN_HOLE_SHORE_DIST) {
       return false;
     }
-    const minDist = PARAMS.minHoleSpacing;
-    const minDist2 = minDist * minDist;
+    const stabilityDist2 = PARAMS.minHoleSpacing * PARAMS.minHoleSpacing;
+    const minSpacing2 = PARAMS.holeMinSpacing * PARAMS.holeMinSpacing;
     const checkAgainst = [...this.holes, ...this.reservations];
     return checkAgainst.every((spot) => {
       const dx = spot.x - x;
       const dy = spot.y - y;
-      return dx * dx + dy * dy >= minDist2;
+      const dist2 = dx * dx + dy * dy;
+      return dist2 >= stabilityDist2 && dist2 >= minSpacing2;
     });
   }
   reserveHole(agent) {
@@ -770,22 +895,108 @@ class Simulation {
       this.gutEvents.pop();
     }
   }
-  
-  slideAlongBoundary(agent, dx, dy, step) {
-    const baseAngle = Math.atan2(dy, dx);
-    const attempts = [15, -15, 30, -30, 45, -45];
-    for (const offset of attempts) {
+  enforceLakeConstraint(agent) {
+    if (isInsideLake(agent.x, agent.y)) {
+      return;
+    }
+    const projected = projectInsideLake(agent.x, agent.y, PARAMS.lakeSafeInset);
+    agent.x = projected.x;
+    agent.y = projected.y;
+    if (agent.state === STATE.DRILLING) {
+      this.releaseReservation(agent);
+      agent.drillTimer = 0;
+    }
+    agent.hasHole = false;
+    agent.hole = null;
+    if (agent.isPlayer) {
+      agent.state = STATE.IDLE;
+      showStatus("Returned inside the lake boundary.");
+    } else {
+      agent.state = STATE.WALKING;
+      this.pickDestination(agent);
+    }
+  }
+
+  isDestinationValid(x, y) {
+    return (
+      isInsideLake(x, y) &&
+      distanceToLakeEdge(x, y) >= PARAMS.minShoreDist &&
+      !this.isPointTooCloseToHole(x, y)
+    );
+  }
+
+  findHoleAdjustedStep(agent, baseAngle, step) {
+    const offsets = [0, 10, -10, 20, -20, 30, -30, 40, -40];
+    for (const offset of offsets) {
       const angle = baseAngle + Phaser.Math.DegToRad(offset);
       const candidate = {
         x: agent.x + Math.cos(angle) * step,
         y: agent.y + Math.sin(angle) * step,
       };
-      if (isInsideLake(candidate.x, candidate.y)) {
+      if (!isInsideLake(candidate.x, candidate.y)) {
+        continue;
+      }
+      if (!this.isPointTooCloseToHole(candidate.x, candidate.y)) {
         return candidate;
       }
     }
     return null;
   }
+
+  turnInwardStep(agent, baseAngle, step) {
+    const centroid = lakeCentroid();
+    const desiredAngle = Math.atan2(centroid.y - agent.y, centroid.x - agent.x);
+    for (let i = 1; i <= 8; i += 1) {
+      const angle = Phaser.Math.Angle.RotateTo(
+        baseAngle,
+        desiredAngle,
+        Phaser.Math.DegToRad(10) * i
+      );
+      const candidate = {
+        x: agent.x + Math.cos(angle) * step,
+        y: agent.y + Math.sin(angle) * step,
+      };
+      if (!isInsideLake(candidate.x, candidate.y)) {
+        continue;
+      }
+      if (!this.isPointTooCloseToHole(candidate.x, candidate.y)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  randomPointInsideLake() {
+    const world = worldRect();
+    for (let i = 0; i < 40; i += 1) {
+      const x = this.rng.range(world.x + 10, world.x + world.w - 10);
+      const y = this.rng.range(world.y + 10, world.y + world.h - 10);
+      if (this.isDestinationValid(x, y)) {
+        return { x, y };
+      }
+    }
+    const fallback = lakeCentroid();
+    return projectInsideLake(fallback.x, fallback.y, PARAMS.lakeSafeInset);
+  }
+
+  snapTargetOutsideHoles(x, y) {
+    const { minDistSq, nearest } = nearestHoleDistanceSquared(x, y, this.getHoleObstacles());
+    const clearance = PARAMS.holeClearance;
+    if (!nearest || minDistSq >= clearance * clearance) {
+      return { x, y };
+    }
+    const dx = x - nearest.x;
+    const dy = y - nearest.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const snapped = {
+      x: nearest.x + (dx / dist) * clearance,
+      y: nearest.y + (dy / dist) * clearance,
+    };
+    return isInsideLake(snapped.x, snapped.y)
+      ? snapped
+      : projectInsideLake(snapped.x, snapped.y, PARAMS.lakeSafeInset);
+  }
+
   countNearbyRecentSuccesses(agent) {
     return this.agents.filter((other) => {
       if (other.id === agent.id) return false;
@@ -893,9 +1104,8 @@ function create() {
       showStatus("Destination outside lake.");
       return;
     }
-    const x = pointer.x;
-    const y = pointer.y;
-    player.destination = { x, y };
+    const snapped = sim.snapTargetOutsideHoles(pointer.x, pointer.y);
+    player.destination = { x: snapped.x, y: snapped.y };
     player.state = STATE.WALKING;
     player.moveCount += 1;
   });
@@ -1016,8 +1226,8 @@ function drawHoles() {
   sim.holes.forEach((hole) => {
     graphics.fillStyle(0x0b1420, 1);
     graphics.fillCircle(hole.x, hole.y, PARAMS.holeRadius);
-    graphics.lineStyle(2, 0x6aaed6, 0.6);
-    graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRadius + 2);
+    graphics.lineStyle(1, 0x6aaed6, 0.3);
+    graphics.strokeCircle(hole.x, hole.y, PARAMS.holeRingRadius);
   });
 }
 
@@ -1081,15 +1291,15 @@ function drawCatchEffects() {
     effect.timer += lastDt || 0;
     const progress = effect.timer / effect.duration;
     const alpha = 0.85 * (1 - progress);
-    const baseRadius = PARAMS.holeRadius + 4;
+    const baseRadius = PARAMS.holeRingRadius;
     for (let i = 0; i < 3; i += 1) {
-      const ringRadius = baseRadius + progress * (16 + i * 6);
+      const ringRadius = baseRadius + progress * (8 + i * 4);
       graphics.lineStyle(2, 0xaaf5ff, alpha * (1 - i * 0.2));
       graphics.strokeCircle(effect.x, effect.y, ringRadius);
     }
     if (effect.isPlayer) {
       graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
-      graphics.strokeCircle(effect.x, effect.y, baseRadius + progress * 28);
+      graphics.strokeCircle(effect.x, effect.y, baseRadius + progress * 12);
     }
   });
 }
