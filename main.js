@@ -53,6 +53,15 @@ function worldRect() {
   return { x, y, w, h };
 }
 
+const SHORE_NOFISH = 18;
+const SHORE_FADE = 60;
+const EDGE_PREF = 80;
+const EDGE_WEIGHT = 0.6;
+const MIN_HOLE_SHORE_DIST = 25;
+const EDGE_MISTAKE_PROB = 0.04;
+
+let shoreDecor = [];
+
 function isInsideWorld(x, y) {
   const world = worldRect();
   return x >= world.x && x <= world.x + world.w && y >= world.y && y <= world.y + world.h;
@@ -77,6 +86,38 @@ function isInsideLake(x, y) {
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+function distanceToLakeEdge(x, y) {
+  if (lakePolygon.length < 2) return 0;
+  let minDist = Infinity;
+  for (let i = 0; i < lakePolygon.length; i += 1) {
+    const j = (i + 1) % lakePolygon.length;
+    const ax = lakePolygon[i].x;
+    const ay = lakePolygon[i].y;
+    const bx = lakePolygon[j].x;
+    const by = lakePolygon[j].y;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSq = dx * dx + dy * dy;
+    let t = 0;
+    if (lengthSq > 0) {
+      t = ((x - ax) * dx + (y - ay) * dy) / lengthSq;
+      t = Phaser.Math.Clamp(t, 0, 1);
+    }
+    const px = ax + t * dx;
+    const py = ay + t * dy;
+    const dist = Math.hypot(x - px, y - py);
+    if (dist < minDist) minDist = dist;
+  }
+  return minDist;
+}
+
+function shoreMultiplier(distance) {
+  if (distance <= SHORE_NOFISH) return 0;
+  if (distance >= SHORE_FADE) return 1;
+  const t = (distance - SHORE_NOFISH) / (SHORE_FADE - SHORE_NOFISH);
+  return t * t * (3 - 2 * t);
 }
 
 const STATE = {
@@ -472,7 +513,9 @@ class Simulation {
     agent.timeAtCurrentSpot += dt;
     agent.leaveCheckTimer += dt;
     const fishDensity = this.fishField.sample(agent.x, agent.y);
-    const pCatchPerSecond = PARAMS.baseCatchRate * fishDensity;
+    const shoreDist = distanceToLakeEdge(agent.x, agent.y);
+    const shoreFactor = shoreMultiplier(shoreDist);
+    const pCatchPerSecond = PARAMS.baseCatchRate * fishDensity * shoreFactor;
     const catchProb = 1 - Math.exp(-pCatchPerSecond * dt);
     if (this.rng.next() < catchProb) {
       agent.catchesTotal += 1;
@@ -611,6 +654,7 @@ class Simulation {
       turnRange = Phaser.Math.DegToRad(20);
     }
     distanceMean = Phaser.Math.Clamp(distanceMean, 5, PARAMS.maxMoveDistance);
+    const ignoreEdgePenalty = this.rng.next() < EDGE_MISTAKE_PROB;
     let best = null;
     let bestScore = -Infinity;
     for (let i = 0; i < PARAMS.candidateCount; i += 1) {
@@ -661,6 +705,11 @@ class Simulation {
         successAttraction = Math.max(0, 1 - dist / socialTarget.radius);
         successAttraction *= socialTarget.weight;
       }
+      let edgePenalty = 0;
+      if (!ignoreEdgePenalty) {
+        const distToEdge = distanceToLakeEdge(x, y);
+        edgePenalty = Phaser.Math.Clamp((EDGE_PREF - distToEdge) / EDGE_PREF, 0, 1);
+      }
       const conditionalMultiplier =
         mode === MODE.SUCCESS_LOOP
           ? 1 / PARAMS.socialMultiplier
@@ -669,7 +718,8 @@ class Simulation {
         PARAMS.socialStrength * socialScore * conditionalMultiplier +
         PARAMS.explorationWeight * explorationScore +
         PARAMS.inertiaWeight * inertiaScore +
-        successAttraction;
+        successAttraction -
+        EDGE_WEIGHT * edgePenalty;
       if (!Number.isFinite(score)) {
         continue;
       }
@@ -686,6 +736,9 @@ class Simulation {
   }
   isHoleLocationValid(x, y) {
     if (!isInsideLake(x, y)) {
+      return false;
+    }
+    if (distanceToLakeEdge(x, y) < MIN_HOLE_SHORE_DIST) {
       return false;
     }
     const minDist = PARAMS.minHoleSpacing;
@@ -889,6 +942,7 @@ function drawLakeBackground() {
   const world = worldRect();
   graphics.fillStyle(0x0f1724, 1);
   graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
+  drawShoreDecor();
   if (lakePolygon.length > 2) {
     graphics.fillStyle(0x18324b, 1);
     graphics.beginPath();
@@ -921,6 +975,41 @@ function drawLakeBackground() {
   });
   graphics.lineStyle(4, 0x79b4d6, 0.6);
   graphics.strokeRoundedRect(10, 10, PARAMS.width - 20, PARAMS.height - 20, 26);
+}
+
+function drawShoreDecor() {
+  shoreDecor.forEach((item) => {
+    if (item.type === "reeds") {
+      graphics.lineStyle(1, 0x6b7c6b, 0.8);
+      for (let i = 0; i < 4; i += 1) {
+        const angle = -Math.PI / 2 + item.reedAngles[i];
+        const length = item.reedLengths[i];
+        graphics.beginPath();
+        graphics.moveTo(item.x, item.y);
+        graphics.lineTo(item.x + Math.cos(angle) * length, item.y + Math.sin(angle) * length);
+        graphics.strokePath();
+        graphics.fillStyle(0xe8f2ff, 0.8);
+        graphics.fillCircle(
+          item.x + Math.cos(angle) * length,
+          item.y + Math.sin(angle) * length,
+          1.5
+        );
+      }
+    } else if (item.type === "conifer") {
+      graphics.fillStyle(0x3f4b3f, 0.9);
+      graphics.fillTriangle(item.x, item.y - 12, item.x - 6, item.y, item.x + 6, item.y);
+      graphics.fillTriangle(item.x, item.y - 6, item.x - 7, item.y + 6, item.x + 7, item.y + 6);
+      graphics.fillStyle(0xe8f2ff, 0.7);
+      graphics.fillCircle(item.x - 2, item.y - 10, 2);
+    } else {
+      graphics.fillStyle(0x5a6a5a, 0.9);
+      graphics.fillCircle(item.x - 4, item.y, 5);
+      graphics.fillCircle(item.x + 2, item.y - 3, 4);
+      graphics.fillCircle(item.x + 6, item.y + 2, 4);
+      graphics.fillStyle(0xe8f2ff, 0.7);
+      graphics.fillCircle(item.x, item.y - 4, 3);
+    }
+  });
 }
 
 function drawHoles() {
@@ -1026,7 +1115,12 @@ function setupUI() {
     if (!player) return;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
     if (!sim.isHoleLocationValid(player.x, player.y)) {
-      showStatus("Too close to another hole (ice stability). Move further away.");
+      const shoreDist = distanceToLakeEdge(player.x, player.y);
+      if (shoreDist < MIN_HOLE_SHORE_DIST) {
+        showStatus("Too close to shore (shallow/low yield).");
+      } else {
+        showStatus("Too close to another hole (ice stability). Move further away.");
+      }
       return;
     }
     sim.reserveHole(player);
@@ -1114,6 +1208,7 @@ function resetSimulation() {
     };
   });
   lakePolygon = generateLakePolygon();
+  shoreDecor = generateShoreDecor();
   lastFrameTime = 0;
 }
 
@@ -1133,6 +1228,45 @@ function generateLakePolygon() {
     points.push({ x, y });
   }
   return points;
+}
+
+function generateShoreDecor() {
+  const decor = [];
+  const stepMin = 25;
+  const stepMax = 45;
+  for (let i = 0; i < lakePolygon.length; i += 1) {
+    const next = (i + 1) % lakePolygon.length;
+    const ax = lakePolygon[i].x;
+    const ay = lakePolygon[i].y;
+    const bx = lakePolygon[next].x;
+    const by = lakePolygon[next].y;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const length = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.floor(length / rng.range(stepMin, stepMax)));
+    const nx = dy / length;
+    const ny = -dx / length;
+    for (let s = 0; s < steps; s += 1) {
+      const t = s / steps;
+      const px = ax + dx * t;
+      const py = ay + dy * t;
+      const offset = rng.range(8, 22);
+      const decorX = px + nx * offset;
+      const decorY = py + ny * offset;
+      const typeRoll = rng.next();
+      const type = typeRoll < 0.6 ? "bush" : typeRoll < 0.85 ? "reeds" : "conifer";
+      const reedAngles = [];
+      const reedLengths = [];
+      if (type === "reeds") {
+        for (let i = 0; i < 4; i += 1) {
+          reedAngles.push(rng.range(-0.4, 0.4));
+          reedLengths.push(rng.range(10, 16));
+        }
+      }
+      decor.push({ x: decorX, y: decorY, type, reedAngles, reedLengths });
+    }
+  }
+  return decor;
 }
 
 function getPlayer() {
