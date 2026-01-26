@@ -678,7 +678,7 @@ class Simulation {
       this.recordSuccessEvent(agent);
       this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
-        pushToast("You caught a fish (recent success — fishers usually stay longer).", "success");
+        pushToast("You caught a fish — recent success, fishers usually stay longer.", "success");
       } else {
         this.notifyNeighborCatch(agent);
       }
@@ -797,9 +797,7 @@ class Simulation {
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
       player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
       pushToast(
-        `Neighbor caught a fish nearby (within ${Math.round(
-          PARAMS.neighborRadius
-        )}m, within ${Math.round(PARAMS.socialWindow / 60)} min).`,
+        "Nearby success — fishers tend to stay.",
         "neighbor"
       );
     }
@@ -1502,7 +1500,7 @@ function setupUI() {
     updateMatchSpeedLabel(simSpeedValue);
   });
   updateMatchSpeedLabel(simSpeedValue);
-  UI.timeScaleLabel.textContent = "(3h match)";
+  UI.timeScaleLabel.textContent = "Match length set";
 
   const panel = document.getElementById("ui-panel");
   const stopEvents = (event) => {
@@ -1535,7 +1533,7 @@ function setupUI() {
 
   UI.endReplay?.addEventListener("click", () => {
     hideEndOverlay();
-    showStatus("Adjust match duration, then click Reset run to replay.");
+    showStatus("Adjust match duration, then click Start over to replay.");
   });
 }
 
@@ -1671,21 +1669,18 @@ function startFishing(agent) {
   agent.timeAtCurrentSpot = 0;
 }
 
-function formatDuration(totalSeconds) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  return `${minutes}m ${seconds}s`;
-}
-
 function getContestDuration() {
   return Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
 }
 
 function updateMatchSpeedLabel(label) {
   if (!label) return;
-  const targetGameSeconds = getContestDuration();
-  const compression = REAL_MATCH_SECONDS / targetGameSeconds;
-  const labelText = `3h → ${formatDuration(targetGameSeconds)} (x${Math.round(compression)})`;
+  let labelText = "Match duration: standard";
+  if (PARAMS.matchSpeed <= 0.33) {
+    labelText = "Match duration: short";
+  } else if (PARAMS.matchSpeed >= 0.67) {
+    labelText = "Match duration: long";
+  }
   label.textContent = labelText;
 }
 
