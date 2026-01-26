@@ -3,15 +3,15 @@ const PARAMS = {
   height: 540,
   mapMargin: 16,
   npcCount: 9,
-  npcSpeed: 28,
-  playerSpeed: 32,
-  drillTime: 8,
-  baseCatchRate: 0.03,
+  npcSpeed: 55,
+  playerSpeed: 65,
+  drillTime: 1.7,
+  baseCatchRate: 0.02,
   holeRadius: 7,
   minHoleSpacing: 30,
-  minDwell: 600,
-  targetDwell: 900,
-  leaveCheckInterval: 10,
+  minDwell: 25,
+  targetDwell: 35,
+  leaveCheckInterval: 2,
   fishGridCols: 80,
   fishGridRows: 50,
   patchiness: 6,
@@ -25,14 +25,15 @@ const PARAMS = {
   inertiaWeight: 0.4,
   socialStrength: 0.9,
   socialMultiplier: 1.6,
-  successWindow: 60,
+  successWindow: 32,
   maxMoveDistance: 220,
   minMoveDistance: 40,
   candidateCount: 30,
   simSpeed: 1,
-  timeScale: 8,
+  timeScale: 18,
   socialWindow: 420,
   socialCueWeight: 0.2,
+  forbiddenZone: { x: 0, y: 0, w: 320, h: 330 },
   devMode: false,
   seed: "ice-lake-01",
 };
@@ -43,6 +44,11 @@ const STATE = {
   DRILLING: "DRILLING",
   READY: "READY",
   FISHING: "FISHING",
+};
+
+const MODE = {
+  SUCCESS_LOOP: "SUCCESS_LOOP",
+  FAILURE_LINE: "FAILURE_LINE",
 };
 
 const UI = {};
@@ -365,10 +371,19 @@ class Simulation {
       return;
     }
     const step = Math.min(dist, agent.speed * dt);
-    agent.x += (dx / dist) * step;
-    agent.y += (dy / dist) * step;
-    agent.x = Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
-    agent.y = Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+    const nextX = agent.x + (dx / dist) * step;
+    const nextY = agent.y + (dy / dist) * step;
+    if (this.isInForbidden(nextX, nextY)) {
+      if (agent.isPlayer) {
+        agent.state = STATE.IDLE;
+        showStatus("Move outside the HUD area to continue.");
+      } else {
+        this.pickDestination(agent);
+      }
+      return;
+    }
+    agent.x = Phaser.Math.Clamp(nextX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
+    agent.y = Phaser.Math.Clamp(nextY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
   }
   updateDrilling(agent, dt) {
     agent.drillTimer = Math.max(0, agent.drillTimer - dt);
@@ -415,11 +430,19 @@ class Simulation {
         PARAMS.neighborRadius,
         agent.id
       );
+      const nearbyRecentSuccessCount = this.countNearbyRecentSuccesses(agent);
       const anchorBonus = agent.hasCaughtHere ? PARAMS.anchorStrength : 0;
       const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
-      const dwellFactor = Math.max(0, PARAMS.targetDwell - agent.timeAtCurrentSpot) * -0.001;
+      const dwellFactor = Math.max(0, PARAMS.targetDwell - agent.timeAtCurrentSpot) * -0.03;
+      const mode = this.getMovementMode(agent);
+      const socialSuccessTerm =
+        mode === MODE.SUCCESS_LOOP ? -PARAMS.socialCueWeight * nearbyRecentSuccessCount : 0;
       const leaveScore =
-        PARAMS.gutK * agent.timeSinceLastCatch - anchorBonus + crowdBonus + dwellFactor;
+        PARAMS.gutK * agent.timeSinceLastCatch -
+        anchorBonus +
+        crowdBonus +
+        dwellFactor +
+        socialSuccessTerm;
       const leaveProbPerSecond = 1 / (1 + Math.exp(-leaveScore));
       const leaveProb = 1 - Math.exp(-leaveProbPerSecond * dt);
       if (this.rng.next() < leaveProb) {
@@ -444,38 +467,74 @@ class Simulation {
   }
   spawnFishIcon(agent) {
     const scene = this.scene;
-    const size = agent.isPlayer ? 12 : 10;
-    const bodyColor = agent.isPlayer ? 0xfff3a1 : 0xb7f0ff;
+    const size = agent.isPlayer ? 13 : 11;
+    const bodyColor = agent.isPlayer ? 0xe6f2ff : 0xc8d7e6;
+    const outlineColor = agent.isPlayer ? 0x9fb4c7 : 0x7f93a6;
     const fish = scene.add.container(agent.x, agent.y - 18);
-    const body = scene.add.ellipse(0, 0, size * 1.4, size, bodyColor, 0.95);
-    const tail = scene.add.triangle(
-      -size * 1.2,
+    const body = scene.add.ellipse(0, 0, size * 1.6, size, bodyColor, 0.95);
+    body.setStrokeStyle(1, outlineColor, 0.8);
+    const tailTop = scene.add.triangle(
+      -size * 1.1,
+      -size * 0.1,
       0,
       0,
-      -size * 0.5,
       -size * 0.8,
-      0,
-      0,
-      size * 0.5,
+      -size * 0.6,
+      -size * 1.4,
+      -size * 0.2,
       bodyColor,
       0.95
     );
-    const eye = scene.add.circle(size * 0.4, -size * 0.2, 1.5, 0x0b1220, 0.95);
-    fish.add([body, tail, eye]);
+    const tailBottom = scene.add.triangle(
+      -size * 1.1,
+      size * 0.1,
+      0,
+      0,
+      -size * 0.8,
+      size * 0.6,
+      -size * 1.4,
+      size * 0.2,
+      bodyColor,
+      0.95
+    );
+    const dorsal = scene.add.triangle(
+      -size * 0.1,
+      -size * 0.6,
+      0,
+      0,
+      size * 0.2,
+      -size * 0.6,
+      -size * 0.1,
+      -size * 1.0,
+      bodyColor,
+      0.9
+    );
+    const eye = scene.add.circle(size * 0.45, -size * 0.2, 1.5, 0x2a3b4a, 0.9);
+    const gill = scene.add.line(
+      size * 0.2,
+      0,
+      0,
+      -size * 0.3,
+      0,
+      size * 0.3,
+      outlineColor,
+      0.7
+    );
+    fish.add([body, tailTop, tailBottom, dorsal, eye, gill]);
     scene.tweens.add({
       targets: fish,
-      y: fish.y - 25,
+      y: fish.y - 30,
       alpha: 0,
-      duration: 3000,
+      duration: 3400,
       ease: "Sine.easeOut",
       onComplete: () => fish.destroy(),
     });
     scene.tweens.add({
       targets: fish,
-      rotation: 0.25,
-      duration: 350,
+      rotation: 0.18,
+      duration: 400,
       yoyo: true,
-      repeat: 6,
+      repeat: 7,
       ease: "Sine.easeInOut",
     });
   }
@@ -494,19 +553,39 @@ class Simulation {
     }
   }
   pickDestination(agent) {
-    const recentSuccess = agent.recentSuccess();
+    const mode = this.getMovementMode(agent);
     const failureFactor = Math.min(1, agent.timeSinceLastCatch / 240);
-    const distanceMean = recentSuccess
-      ? PARAMS.minMoveDistance * 1.2
-      : Phaser.Math.Linear(PARAMS.minMoveDistance * 1.5, PARAMS.maxMoveDistance, failureFactor);
-    const turnRange = recentSuccess ? Math.PI / 4 : Math.PI * 1.2;
+    const localDensity = this.spatialHash.countWithin(
+      agent.x,
+      agent.y,
+      PARAMS.neighborRadius,
+      agent.id
+    );
+    const nearbyRecentSuccessCount = this.countNearbyRecentSuccesses(agent);
+    const densityFactor = Math.min(1, localDensity / 6);
+    const successBoost = Math.min(3, nearbyRecentSuccessCount);
+    let distanceMean;
+    let turnRange;
+    if (mode === MODE.SUCCESS_LOOP) {
+      distanceMean = Phaser.Math.Linear(18, 40, 1 - failureFactor);
+      distanceMean *= 1 - densityFactor * 0.25 - successBoost * 0.08;
+      turnRange = Phaser.Math.DegToRad(120 + densityFactor * 40);
+    } else {
+      distanceMean = Phaser.Math.Linear(120, 220, failureFactor);
+      turnRange = Phaser.Math.DegToRad(20 + (1 - failureFactor) * 10);
+    }
+    distanceMean = Phaser.Math.Clamp(distanceMean, 12, PARAMS.maxMoveDistance);
     let best = null;
     let bestScore = -Infinity;
     for (let i = 0; i < PARAMS.candidateCount; i += 1) {
-      const distance = distanceMean + this.rng.range(-20, 50);
+      const distance =
+        distanceMean + this.rng.range(mode === MODE.SUCCESS_LOOP ? -8 : -20, mode === MODE.SUCCESS_LOOP ? 20 : 60);
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
+      if (this.isInForbidden(rawX, rawY)) {
+        continue;
+      }
       if (
         rawX < PARAMS.mapMargin ||
         rawY < PARAMS.mapMargin ||
@@ -521,9 +600,10 @@ class Simulation {
       const socialScore = Math.min(1, neighborCount / 8);
       const explorationScore = this.rng.next();
       const inertiaScore = Math.cos(angle - agent.lastMoveDirectionAngle) * 0.5 + 0.5;
-      const conditionalMultiplier = recentSuccess
-        ? 1 / PARAMS.socialMultiplier
-        : 1 + (PARAMS.socialMultiplier - 1) * failureFactor;
+      const conditionalMultiplier =
+        mode === MODE.SUCCESS_LOOP
+          ? 1 / PARAMS.socialMultiplier
+          : 1 + (PARAMS.socialMultiplier - 1) * failureFactor;
       const score =
         PARAMS.socialStrength * socialScore * conditionalMultiplier +
         PARAMS.explorationWeight * explorationScore +
@@ -542,6 +622,9 @@ class Simulation {
     }
   }
   isHoleLocationValid(x, y) {
+    if (this.isInForbidden(x, y)) {
+      return false;
+    }
     const minDist = PARAMS.minHoleSpacing;
     const minDist2 = minDist * minDist;
     const checkAgainst = [...this.holes, ...this.reservations];
@@ -571,6 +654,30 @@ class Simulation {
       this.gutEvents.pop();
     }
   }
+  isInForbidden(x, y) {
+    const zone = PARAMS.forbiddenZone;
+    return (
+      x >= zone.x &&
+      x <= zone.x + zone.w &&
+      y >= zone.y &&
+      y <= zone.y + zone.h
+    );
+  }
+  countNearbyRecentSuccesses(agent) {
+    return this.agents.filter((other) => {
+      if (other.id === agent.id) return false;
+      const dx = other.x - agent.x;
+      const dy = other.y - agent.y;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 > PARAMS.neighborRadius * PARAMS.neighborRadius) return false;
+      return this.simTime - other.lastCatchTime <= PARAMS.socialWindow;
+    }).length;
+  }
+  getMovementMode(agent) {
+    return agent.timeSinceLastCatch < PARAMS.successWindow
+      ? MODE.SUCCESS_LOOP
+      : MODE.FAILURE_LINE;
+  }
 }
 
 const uiState = {
@@ -596,7 +703,6 @@ let sim;
 let graphics;
 let lastFrameTime = 0;
 let lastDt = 0;
-let lastLogTime = 0;
 let rng;
 let crackLines = [];
 let statusTimeout;
@@ -608,11 +714,14 @@ function create() {
   resetSimulation();
   setupUI();
   this.input.on("pointerdown", (pointer) => {
-    console.log("canvas pointerdown", pointer.x, pointer.y);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.DRILLING || player.state === STATE.FISHING) {
       showStatus("Finish drilling or stop fishing before moving.");
+      return;
+    }
+    if (sim.isInForbidden(pointer.x, pointer.y)) {
+      showStatus("Destination blocked by HUD area.");
       return;
     }
     const x = Phaser.Math.Clamp(pointer.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
@@ -644,16 +753,6 @@ function update(time) {
     sim.update(dtSim);
     renderScene(time / 1000);
     updateHUD();
-    if (time - lastLogTime >= 1000) {
-      lastLogTime = time;
-      console.log("tick", {
-        rawDt,
-        dtSim,
-        timeScale: PARAMS.timeScale,
-        simSpeed: PARAMS.simSpeed,
-        simTime: sim.simTime,
-      });
-    }
   } catch (err) {
     console.error("Update crashed", err);
     const message = err?.message ? String(err.message).split("\n")[0] : "Unknown error";
@@ -791,7 +890,6 @@ function setupUI() {
   UI.errorBanner = document.getElementById("error-banner");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
-    console.log("drill clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
@@ -806,7 +904,6 @@ function setupUI() {
   });
 
   document.getElementById("fish-btn").addEventListener("click", () => {
-    console.log("fish clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.FISHING) return;
@@ -818,7 +915,6 @@ function setupUI() {
   });
 
   document.getElementById("stop-btn").addEventListener("click", () => {
-    console.log("stop clicked", sim?.player?.state, sim?.player);
     const player = getPlayer();
     if (!player) return;
     if (player.state === STATE.DRILLING) {
@@ -839,7 +935,7 @@ function setupUI() {
     PARAMS.simSpeed = parseFloat(simSpeed.value);
     simSpeedValue.textContent = `${PARAMS.simSpeed.toFixed(1)}x`;
   });
-  UI.timeScaleLabel.textContent = `(x${PARAMS.timeScale} accelerated)`;
+  UI.timeScaleLabel.textContent = "(3h compressed to 10m)";
 
   document.getElementById("show-gut").addEventListener("change", (event) => {
     uiState.showGut = event.target.checked;
@@ -940,6 +1036,7 @@ function updateGutPanel() {
   const timeTerm = PARAMS.gutK * player.timeSinceLastCatch;
   const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
+  const mode = sim.getMovementMode(player);
   UI.gutPressure.textContent = pressure.toFixed(2);
   UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
   UI.gutAnchor.textContent = player.hasCaughtHere ? "ON" : "OFF";
@@ -957,14 +1054,23 @@ function updateGutPanel() {
       UI.gutEvents.appendChild(line);
     });
   }
+  const modeLine = document.createElement("div");
+  modeLine.textContent = `Mode: ${mode}`;
+  const densityLine = document.createElement("div");
+  densityLine.textContent = `Nearby fishers: ${localDensity}`;
+  const successLine = document.createElement("div");
+  successLine.textContent = `Nearby recent successes: ${nearbyRecentSuccessCount} (window ${Math.round(
+    PARAMS.socialWindow / 60
+  )} min)`;
   const breakdown = document.createElement("div");
   breakdown.textContent = `Pressure = sigmoid(${timeTerm.toFixed(2)} - ${anchorBonus.toFixed(
     2
   )} + ${crowdBonus.toFixed(2)} + ${socialCue.toFixed(2)})`;
   const detail = document.createElement("div");
-  detail.textContent = `Social cue: ${nearbyRecentSuccessCount} recent successes (window ${Math.round(
-    PARAMS.socialWindow / 60
-  )} min)`;
+  detail.textContent = `Social success term: ${socialCue.toFixed(2)}`;
+  UI.gutEvents.appendChild(modeLine);
+  UI.gutEvents.appendChild(densityLine);
+  UI.gutEvents.appendChild(successLine);
   UI.gutEvents.appendChild(breakdown);
   UI.gutEvents.appendChild(detail);
 }
