@@ -676,7 +676,7 @@ class Simulation {
       this.recordSuccessEvent(agent);
       this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
-        pushToast("You caught a fish (pressure reset).", "success");
+        pushToast("You caught a fish (recent success — fishers usually stay longer).", "success");
       } else {
         this.notifyNeighborCatch(agent);
       }
