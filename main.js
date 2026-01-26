@@ -1628,23 +1628,13 @@ function updateHUD() {
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
   if (UI.debugState) {
-    UI.debugState.textContent = `State: ${sim.player.state} | Hole: ${
-      sim.player.hasHole ? "yes" : "no"
-    }`;
+    UI.debugState.textContent = "";
   }
   if (UI.statsLine) {
-    const totalMoves = sim.agents.reduce((sum, agent) => sum + agent.moveCount, 0);
-    const totalCatches = sim.agents.reduce((sum, agent) => sum + agent.catchesTotal, 0);
-    const totalHoles = sim.holes.length;
-    const agentCount = sim.agents.length;
-    UI.statsLine.textContent = `Moves: ${(totalMoves / agentCount).toFixed(1)} | Holes: ${(
-      totalHoles / agentCount
-    ).toFixed(1)} | Catches: ${(totalCatches / agentCount).toFixed(1)}`;
+    UI.statsLine.textContent = "";
   }
   if (UI.playerDebug) {
-    const dest = sim.player.destination;
-    const dist = Math.hypot(dest.x - sim.player.x, dest.y - sim.player.y);
-    UI.playerDebug.textContent = `Player: ${sim.player.state} distToDest=${dist.toFixed(1)}`;
+    UI.playerDebug.textContent = "";
   }
   if (uiState.showGut) {
     updateGutPanel();
@@ -1690,10 +1680,7 @@ function updateGutPanel() {
   const clampedPressure = Phaser.Math.Clamp(pressure, 0, 1);
   UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
   if (UI.gutRecent) {
-    const windowMinutes = Math.round(PARAMS.socialWindow / 60);
-    UI.gutRecent.textContent = `Nearby recent catches (last ${windowMinutes} min, within ${Math.round(
-      PARAMS.neighborRadius
-    )} m): ${nearbyRecentSuccessCount}`;
+    UI.gutRecent.textContent = `Nearby recent catches: ${nearbyRecentSuccessCount}`;
   }
   if (UI.gutSocial) {
     let socialLabel = "none";
