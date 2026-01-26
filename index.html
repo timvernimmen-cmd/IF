@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ice Fishing Competition Simulator</title>
+    <title>Ice Fishing Explainer</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
   </head>
@@ -13,125 +13,35 @@
         <div id="game"></div>
         <div id="overlay">
           <div class="hud">
-            <div>
-              <strong>Timer:</strong> <span id="timer">00:00</span>
-            </div>
-            <div>
-              <strong>Player catches:</strong> <span id="player-catches">0</span>
-            </div>
-            <div>
-              <strong>Rank estimate:</strong> <span id="player-rank">-</span>
-            </div>
-            <div>
-              <strong>Player time since catch:</strong>
-              <span id="player-gut">0s</span>
-            </div>
-            <div id="debug-panel" class="hidden">
-              <strong>Debug:</strong>
-              <div>Player speed: <span id="debug-player-speed">0</span> px/s</div>
-              <div>NPC avg speed: <span id="debug-npc-speed">0</span> px/s</div>
-              <div>OOB candidates/sec: <span id="debug-oob">0</span></div>
-            </div>
+            <div><strong>Time:</strong> <span id="timer">00:00</span></div>
+            <div><strong>Player catches:</strong> <span id="player-catches">0</span></div>
+            <div><strong>Rank:</strong> <span id="player-rank">-</span></div>
           </div>
           <div class="controls">
-            <button id="move-now">Move Now</button>
+            <div class="hint">Click on the lake to move.</div>
+            <div class="buttons">
+              <button id="drill-btn">Drill hole</button>
+              <button id="fish-btn">Fish</button>
+              <button id="stop-btn">Stop</button>
+            </div>
+            <div class="inline">
+              <label>Sim speed</label>
+              <input type="range" id="sim-speed" min="0.5" max="2" step="0.1" value="1" />
+              <span id="sim-speed-value">1.0x</span>
+            </div>
             <label class="toggle">
-              <input type="checkbox" id="autopilot-toggle" />
-              Autopilot player (NPC rules)
+              <input type="checkbox" id="show-gut" />
+              Show GUT indicator
             </label>
-            <label class="toggle">
-              <input type="checkbox" id="freeze-toggle" />
-              Freeze simulation
-            </label>
-            <button id="step-btn">Step</button>
           </div>
-        </div>
-      </div>
-      <aside id="side-panel">
-        <section>
-          <h2>Explainer</h2>
-          <label class="toggle">
-            <input type="checkbox" id="show-density" />
-            Show NPC density overlay
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-fish" />
-            Show fish density overlay
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-trails" checked />
-            Show trails/paths
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-labels" />
-            Show NPC state labels
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-debug" />
-            Show debug stats
-          </label>
-        </section>
-        <section>
-          <h2>Parameters</h2>
-          <div class="param">
-            <label>NPC count <span id="npc-count-value"></span></label>
-            <input type="range" id="npc-count" min="30" max="60" value="40" />
+          <div id="gut-panel" class="gut hidden">
+            <h3>Giving-up pressure (GUT)</h3>
+            <div class="gut-metric">Pressure: <span id="gut-pressure">0.00</span></div>
+            <div class="gut-metric">Time since catch: <span id="gut-time">0s</span></div>
+            <div class="gut-metric">Anchor: <span id="gut-anchor">OFF</span></div>
+            <div class="gut-metric">Nearby fishers: <span id="gut-crowd">0</span></div>
+            <div class="gut-events" id="gut-events"></div>
           </div>
-          <div class="param">
-            <label>Social attraction strength <span id="social-strength-value"></span></label>
-            <input type="range" id="social-strength" min="0" max="2" step="0.05" value="0.9" />
-          </div>
-          <div class="param">
-            <label>Conditional social multiplier <span id="social-multiplier-value"></span></label>
-            <input type="range" id="social-multiplier" min="0.5" max="3" step="0.1" value="1.6" />
-          </div>
-          <div class="param">
-            <label>GUT sensitivity <span id="gut-k-value"></span></label>
-            <input type="range" id="gut-k" min="0.001" max="0.02" step="0.001" value="0.006" />
-          </div>
-          <div class="param">
-            <label>First catch anchors you <span id="anchor-strength-value"></span></label>
-            <input type="range" id="anchor-strength" min="0" max="3" step="0.1" value="1.4" />
-          </div>
-          <div class="param">
-            <label>Fish patchiness <span id="patchiness-value"></span></label>
-            <input type="range" id="patchiness" min="2" max="12" step="1" value="6" />
-          </div>
-          <div class="param">
-            <label>Depletion rate <span id="depletion-value"></span></label>
-            <input type="range" id="depletion" min="0.02" max="0.2" step="0.01" value="0.08" />
-          </div>
-          <div class="param">
-            <label>Recovery rate <span id="recovery-value"></span></label>
-            <input type="range" id="recovery" min="0" max="0.02" step="0.001" value="0.004" />
-          </div>
-          <div class="param">
-            <label>Time scale <span id="time-scale-value"></span></label>
-            <input type="range" id="time-scale" min="10" max="60" step="1" value="30" />
-          </div>
-          <div class="param">
-            <label>Random seed</label>
-            <input type="text" id="seed" value="ice-lake-01" />
-          </div>
-          <button id="reset-btn">Reset</button>
-        </section>
-      </aside>
-    </div>
-    <div id="end-screen" class="hidden">
-      <div class="end-card">
-        <h2>Session Analytics</h2>
-        <div id="summary"></div>
-        <div class="heatmap-wrap">
-          <h3>Fisher occupancy heatmap</h3>
-          <canvas id="heatmap" width="800" height="500"></canvas>
-        </div>
-        <div>
-          <h3>Leaderboard</h3>
-          <ol id="leaderboard"></ol>
-        </div>
-        <div class="end-actions">
-          <button id="restart-same">Restart same seed</button>
-          <button id="restart-new">Restart new seed</button>
         </div>
       </div>
     </div>

@@ -1,36 +1,38 @@
 const PARAMS = {
-  width: 800,
-  height: 500,
+  width: 860,
+  height: 540,
+  mapMargin: 16,
   npcCount: 40,
-  socialStrength: 0.9,
-  socialMultiplier: 1.6,
-  gutK: 0.006,
-  anchorStrength: 1.4,
-  patchiness: 6,
-  depletion: 0.08,
-  recovery: 0.004,
-  timeScale: 30,
-  seed: "ice-lake-01",
-  baseCatchRate: 0.12,
+  npcSpeed: 60,
+  playerSpeed: 80,
+  drillTime: 8,
+  baseCatchRate: 0.03,
   fishGridCols: 80,
   fishGridRows: 50,
-  neighborRadius: 60,
-  leaveCrowdEffect: 0.12,
-  npcSpeedMin: 60,
-  npcSpeedMax: 120,
-  playerSpeed: 130,
-  successWindow: 60,
+  patchiness: 6,
+  depletion: 0.06,
+  recovery: 0.003,
+  neighborRadius: 70,
+  gutK: 0.006,
+  anchorStrength: 1.2,
+  leaveCrowdEffect: 0.08,
   explorationWeight: 0.25,
   inertiaWeight: 0.4,
-  candidateCount: 30,
+  socialStrength: 0.9,
+  socialMultiplier: 1.6,
+  successWindow: 60,
   maxMoveDistance: 220,
-  minMoveDistance: 30,
-  sessionHours: 3,
-  mapMargin: 14,
+  minMoveDistance: 40,
+  candidateCount: 30,
+  simSpeed: 1,
+  seed: "ice-lake-01",
 };
 
 const STATE = {
+  IDLE: "IDLE",
   WALKING: "WALKING",
+  DRILLING: "DRILLING",
+  READY: "READY",
   FISHING: "FISHING",
 };
 
@@ -143,14 +145,14 @@ class FishField {
   }
   initPatches() {
     const patches = PARAMS.patchiness;
-    const sigma = Math.min(this.width, this.height) * 0.12;
+    const sigma = Math.min(this.width, this.height) * 0.16;
     const centers = Array.from({ length: patches }, () => ({
-      x: this.rng.range(0, this.width),
-      y: this.rng.range(0, this.height),
+      x: this.rng.range(PARAMS.mapMargin, this.width - PARAMS.mapMargin),
+      y: this.rng.range(PARAMS.mapMargin, this.height - PARAMS.mapMargin),
     }));
     for (let row = 0; row < this.rows; row += 1) {
       for (let col = 0; col < this.cols; col += 1) {
-        let value = 0.05 * this.rng.next();
+        let value = 0.03 * this.rng.next();
         for (let i = 0; i < patches; i += 1) {
           const dx = (col / this.cols) * this.width - centers[i].x;
           const dy = (row / this.rows) * this.height - centers[i].y;
@@ -200,22 +202,20 @@ class Agent {
     this.x = x;
     this.y = y;
     this.isPlayer = isPlayer;
-    this.state = STATE.FISHING;
+    this.state = isPlayer ? STATE.IDLE : STATE.WALKING;
     this.destination = { x, y };
-    this.speed = PARAMS.playerSpeed;
+    this.speed = isPlayer ? PARAMS.playerSpeed : PARAMS.npcSpeed;
     this.catchesTotal = 0;
     this.timeSinceLastCatch = 0;
     this.hasCaughtHere = false;
     this.timeAtCurrentSpot = 0;
     this.lastMoveDirectionAngle = 0;
     this.recentSuccessTimer = 0;
+    this.drillTimer = 0;
+    this.hasHole = false;
+    this.hole = null;
     this.trail = [];
     this.trailTimer = 0;
-    this.moveDistanceTotal = 0;
-    this.moveCount = 0;
-    this.timeMoving = 0;
-    this.timeFishing = 0;
-    this.lastPosition = { x, y };
   }
   recentSuccess() {
     return this.recentSuccessTimer > 0;
@@ -223,61 +223,47 @@ class Agent {
 }
 
 class Simulation {
-  constructor(scene, rng, params) {
+  constructor(scene, rng) {
     this.scene = scene;
     this.rng = rng;
-    this.params = params;
     this.fishField = new FishField(
-      params.fishGridCols,
-      params.fishGridRows,
-      params.width,
-      params.height,
+      PARAMS.fishGridCols,
+      PARAMS.fishGridRows,
+      PARAMS.width,
+      PARAMS.height,
       rng
     );
-    this.spatialHash = new SpatialHash(50, params.width, params.height);
+    this.spatialHash = new SpatialHash(60, PARAMS.width, PARAMS.height);
     this.agents = [];
+    this.holes = [];
     this.player = null;
     this.simTime = 0;
-    this.sessionDuration = params.sessionHours * 3600;
-    this.occupancy = new Array(params.fishGridCols * params.fishGridRows).fill(0);
-    this.clusterSamples = [];
-    this.speedStats = {
-      playerDistance: 0,
-      npcDistance: 0,
-      playerTime: 0,
-      npcTime: 0,
-      playerSpeed: 0,
-      npcSpeed: 0,
-      oobCandidates: 0,
-      oobRate: 0,
-      oobTimer: 0,
-    };
+    this.gutEvents = [];
     this.initializeAgents();
   }
   initializeAgents() {
-    this.agents = [];
-    const centerX = this.params.width * 0.5;
-    const centerY = this.params.height * 0.5;
-    for (let i = 0; i < this.params.npcCount + 1; i += 1) {
+    const centerX = PARAMS.width * 0.5;
+    const centerY = PARAMS.height * 0.5;
+    for (let i = 0; i < PARAMS.npcCount + 1; i += 1) {
       const angle = this.rng.range(0, Math.PI * 2);
-      const radius = this.rng.range(20, 160);
+      const radius = this.rng.range(60, 180);
       const x = Phaser.Math.Clamp(
         centerX + Math.cos(angle) * radius,
         PARAMS.mapMargin,
-        this.params.width - PARAMS.mapMargin
+        PARAMS.width - PARAMS.mapMargin
       );
       const y = Phaser.Math.Clamp(
         centerY + Math.sin(angle) * radius,
         PARAMS.mapMargin,
-        this.params.height - PARAMS.mapMargin
+        PARAMS.height - PARAMS.mapMargin
       );
       const agent = new Agent(i, x, y, i === 0);
       agent.lastMoveDirectionAngle = angle;
-      agent.speed = agent.isPlayer
-        ? PARAMS.playerSpeed
-        : this.rng.range(PARAMS.npcSpeedMin, PARAMS.npcSpeedMax);
-      if (i === 0) {
+      if (agent.isPlayer) {
         this.player = agent;
+      } else {
+        agent.destination = { x, y };
+        agent.state = STATE.WALKING;
       }
       this.agents.push(agent);
     }
@@ -291,70 +277,60 @@ class Simulation {
     this.updateSpatialHash();
     this.fishField.recover(dt);
     this.agents.forEach((agent) => this.updateAgent(agent, dt));
-    this.recordOccupancy();
-    this.recordClusterSample();
-    this.updateSpeedStats(dt);
-  }
-  recordOccupancy() {
-    this.agents.forEach((agent) => {
-      const col = Math.floor((agent.x / this.params.width) * this.params.fishGridCols);
-      const row = Math.floor((agent.y / this.params.height) * this.params.fishGridRows);
-      const idx = row * this.params.fishGridCols + col;
-      if (idx >= 0 && idx < this.occupancy.length) {
-        this.occupancy[idx] += 1;
-      }
-    });
-  }
-  recordClusterSample() {
-    const counts = this.agents.map((agent) =>
-      this.spatialHash.countWithin(agent.x, agent.y, PARAMS.neighborRadius, agent.id)
-    );
-    const avg = counts.reduce((sum, val) => sum + val, 0) / counts.length;
-    this.clusterSamples.push(avg);
   }
   updateAgent(agent, dt) {
     agent.timeSinceLastCatch += dt;
     agent.recentSuccessTimer = Math.max(0, agent.recentSuccessTimer - dt);
+
     if (agent.state === STATE.WALKING) {
-      agent.timeMoving += dt;
-      const dx = agent.destination.x - agent.x;
-      const dy = agent.destination.y - agent.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 2) {
-        agent.state = STATE.FISHING;
-        agent.timeAtCurrentSpot = 0;
-        agent.hasCaughtHere = false;
-        agent.x = agent.destination.x;
-        agent.y = agent.destination.y;
-      } else {
-        const step = Math.min(dist, agent.speed * dt);
-        agent.x += (dx / dist) * step;
-        agent.y += (dy / dist) * step;
-        agent.x = Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
-        agent.y = Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
-      }
-    } else {
-      agent.timeFishing += dt;
-      agent.timeAtCurrentSpot += dt;
+      this.updateWalking(agent, dt);
+    } else if (agent.state === STATE.DRILLING) {
+      this.updateDrilling(agent, dt);
+    } else if (agent.state === STATE.FISHING) {
       this.updateFishing(agent, dt);
     }
+
     agent.trailTimer += dt;
     if (agent.trailTimer > 1) {
       agent.trailTimer = 0;
       agent.trail.push({ x: agent.x, y: agent.y });
-      if (agent.trail.length > 200) {
+      if (agent.trail.length > 120) {
         agent.trail.shift();
       }
     }
-    this.trackSpeed(agent, dt);
+  }
+  updateWalking(agent, dt) {
+    const dx = agent.destination.x - agent.x;
+    const dy = agent.destination.y - agent.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 2) {
+      agent.x = agent.destination.x;
+      agent.y = agent.destination.y;
+      if (agent.isPlayer) {
+        agent.state = STATE.IDLE;
+      } else {
+        agent.state = STATE.DRILLING;
+        agent.drillTimer = PARAMS.drillTime;
+      }
+      return;
+    }
+    const step = Math.min(dist, agent.speed * dt);
+    agent.x += (dx / dist) * step;
+    agent.y += (dy / dist) * step;
+    agent.x = Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
+    agent.y = Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+  }
+  updateDrilling(agent, dt) {
+    agent.drillTimer = Math.max(0, agent.drillTimer - dt);
+    if (agent.drillTimer <= 0) {
+      agent.state = agent.isPlayer ? STATE.READY : STATE.FISHING;
+      agent.hasHole = true;
+      agent.hole = { x: agent.x, y: agent.y, owner: agent.id };
+      this.holes.push(agent.hole);
+    }
   }
   updateFishing(agent, dt) {
-    const localDensity = this.spatialHash.countWithin(
-      agent.x,
-      agent.y,
-      PARAMS.neighborRadius,
-      agent.id
-    );
+    agent.timeAtCurrentSpot += dt;
     const fishDensity = this.fishField.sample(agent.x, agent.y);
     const pCatchPerSecond = PARAMS.baseCatchRate * fishDensity;
     const catchProb = 1 - Math.exp(-pCatchPerSecond * dt);
@@ -363,49 +339,42 @@ class Simulation {
       agent.timeSinceLastCatch = 0;
       agent.hasCaughtHere = true;
       agent.recentSuccessTimer = PARAMS.successWindow;
-      this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 40);
+      this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
+      if (agent.isPlayer) {
+        this.pushGutEvent("You caught a fish (pressure reset).", "success");
+      } else {
+        this.notifyNeighborCatch(agent);
+      }
     }
-    // GUT: probability to leave rises with time since last catch.
-    const anchorBonus = agent.hasCaughtHere ? PARAMS.anchorStrength : 0;
-    const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
-    const leaveScore = PARAMS.gutK * agent.timeSinceLastCatch - anchorBonus + crowdBonus;
-    const leaveProbPerSecond = 1 / (1 + Math.exp(-leaveScore));
-    const leaveProb = 1 - Math.exp(-leaveProbPerSecond * dt);
-    if (this.rng.next() < leaveProb) {
-      agent.state = STATE.WALKING;
-      agent.timeAtCurrentSpot = 0;
-      agent.hasCaughtHere = false;
-      this.pickDestination(agent);
+
+    if (!agent.isPlayer) {
+      const localDensity = this.spatialHash.countWithin(
+        agent.x,
+        agent.y,
+        PARAMS.neighborRadius,
+        agent.id
+      );
+      const anchorBonus = agent.hasCaughtHere ? PARAMS.anchorStrength : 0;
+      const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
+      const leaveScore = PARAMS.gutK * agent.timeSinceLastCatch - anchorBonus + crowdBonus;
+      const leaveProbPerSecond = 1 / (1 + Math.exp(-leaveScore));
+      const leaveProb = 1 - Math.exp(-leaveProbPerSecond * dt);
+      if (this.rng.next() < leaveProb) {
+        agent.state = STATE.WALKING;
+        agent.timeAtCurrentSpot = 0;
+        agent.hasCaughtHere = false;
+        agent.hasHole = false;
+        this.pickDestination(agent);
+      }
     }
   }
-  trackSpeed(agent, dt) {
-    const dx = agent.x - agent.lastPosition.x;
-    const dy = agent.y - agent.lastPosition.y;
-    const dist = Math.hypot(dx, dy);
-    if (agent.isPlayer) {
-      this.speedStats.playerDistance += dist;
-      this.speedStats.playerTime += dt;
-    } else {
-      this.speedStats.npcDistance += dist;
-      this.speedStats.npcTime += dt;
-    }
-    agent.lastPosition.x = agent.x;
-    agent.lastPosition.y = agent.y;
-  }
-  updateSpeedStats(dt) {
-    this.speedStats.oobTimer += dt;
-    if (this.speedStats.playerTime > 0) {
-      this.speedStats.playerSpeed =
-        this.speedStats.playerDistance / this.speedStats.playerTime;
-    }
-    if (this.speedStats.npcTime > 0) {
-      this.speedStats.npcSpeed = this.speedStats.npcDistance / this.speedStats.npcTime;
-    }
-    if (this.speedStats.oobTimer >= 1) {
-      this.speedStats.oobRate =
-        this.speedStats.oobCandidates / Math.max(1, this.speedStats.oobTimer);
-      this.speedStats.oobCandidates = 0;
-      this.speedStats.oobTimer = 0;
+  notifyNeighborCatch(catchingAgent) {
+    const player = this.player;
+    const dx = catchingAgent.x - player.x;
+    const dy = catchingAgent.y - player.y;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
+      this.pushGutEvent("Neighbor caught a fish nearby (pressure dips).", "neighbor");
     }
   }
   pickDestination(agent) {
@@ -418,30 +387,20 @@ class Simulation {
     let best = null;
     let bestScore = -Infinity;
     for (let i = 0; i < PARAMS.candidateCount; i += 1) {
-      const distance = distanceMean + this.rng.range(-20, 40);
-      const angle =
-        agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
+      const distance = distanceMean + this.rng.range(-20, 50);
+      const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
       if (
         rawX < PARAMS.mapMargin ||
         rawY < PARAMS.mapMargin ||
-        rawX > this.params.width - PARAMS.mapMargin ||
-        rawY > this.params.height - PARAMS.mapMargin
+        rawX > PARAMS.width - PARAMS.mapMargin ||
+        rawY > PARAMS.height - PARAMS.mapMargin
       ) {
-        this.speedStats.oobCandidates += 1;
         continue;
       }
-      const x = Phaser.Math.Clamp(
-        rawX,
-        PARAMS.mapMargin,
-        this.params.width - PARAMS.mapMargin
-      );
-      const y = Phaser.Math.Clamp(
-        rawY,
-        PARAMS.mapMargin,
-        this.params.height - PARAMS.mapMargin
-      );
+      const x = Phaser.Math.Clamp(rawX, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
+      const y = Phaser.Math.Clamp(rawY, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
       const neighborCount = this.spatialHash.countWithin(x, y, PARAMS.neighborRadius, agent.id);
       const socialScore = Math.min(1, neighborCount / 8);
       const explorationScore = this.rng.next();
@@ -464,39 +423,27 @@ class Simulation {
     if (best) {
       agent.destination = { x: best.x, y: best.y };
       agent.lastMoveDirectionAngle = best.angle;
-      const moveDist = Math.hypot(agent.destination.x - agent.x, agent.destination.y - agent.y);
-      agent.moveDistanceTotal += moveDist;
-      agent.moveCount += 1;
-    } else {
-      agent.destination = {
-        x: Phaser.Math.Clamp(agent.x, PARAMS.mapMargin, this.params.width - PARAMS.mapMargin),
-        y: Phaser.Math.Clamp(agent.y, PARAMS.mapMargin, this.params.height - PARAMS.mapMargin),
-      };
+    }
+  }
+  pushGutEvent(text, type) {
+    const timestamp = Math.floor(this.simTime);
+    this.gutEvents.unshift({ text, type, timestamp });
+    if (this.gutEvents.length > 5) {
+      this.gutEvents.pop();
     }
   }
 }
 
-class UISystem {
-  constructor() {
-    this.showDensity = false;
-    this.showFish = false;
-    this.showTrails = true;
-    this.showLabels = false;
-    this.showDebug = false;
-    this.freeze = false;
-    this.step = false;
-    this.autopilot = false;
-  }
-}
-
-const uiState = new UISystem();
+const uiState = {
+  showGut: false,
+};
 
 const config = {
   type: Phaser.CANVAS,
   width: PARAMS.width,
   height: PARAMS.height,
   parent: "game",
-  backgroundColor: "#0b1b2e",
+  backgroundColor: "#1a2d45",
   scene: {
     preload,
     create,
@@ -508,40 +455,24 @@ const game = new Phaser.Game(config);
 
 let sim;
 let graphics;
-let densityGraphics;
-let fishGraphics;
-let labelGraphics;
 let lastFrameTime = 0;
-let endTriggered = false;
-let occupancyCanvas;
-let occupancyCtx;
 let rng;
+let iceTexture;
 
 function preload() {}
 
 function create() {
   graphics = this.add.graphics();
-  densityGraphics = this.add.graphics();
-  fishGraphics = this.add.graphics();
-  labelGraphics = this.add.graphics();
-  occupancyCanvas = document.getElementById("heatmap");
-  occupancyCtx = occupancyCanvas.getContext("2d");
   setupUI();
   resetSimulation();
+  createIceTexture();
   this.input.on("pointerdown", (pointer) => {
-    if (uiState.autopilot) return;
-    const x = Phaser.Math.Clamp(
-      pointer.x,
-      PARAMS.mapMargin,
-      PARAMS.width - PARAMS.mapMargin
-    );
-    const y = Phaser.Math.Clamp(
-      pointer.y,
-      PARAMS.mapMargin,
-      PARAMS.height - PARAMS.mapMargin
-    );
-    sim.player.destination = { x, y };
-    sim.player.state = STATE.WALKING;
+    const player = sim.player;
+    if (player.state === STATE.DRILLING || player.state === STATE.FISHING) return;
+    const x = Phaser.Math.Clamp(pointer.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
+    const y = Phaser.Math.Clamp(pointer.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
+    player.destination = { x, y };
+    player.state = STATE.WALKING;
   });
 }
 
@@ -550,227 +481,192 @@ function update(time) {
   if (!lastFrameTime) lastFrameTime = time;
   const rawDt = (time - lastFrameTime) / 1000;
   lastFrameTime = time;
-  const dt = Math.min(rawDt, 0.05) * PARAMS.timeScale;
-  if (!uiState.freeze || uiState.step) {
-    sim.update(dt);
-    if (uiState.step) {
-      uiState.step = false;
-    }
-  }
-  renderScene();
+  const dt = Math.min(rawDt, 0.05) * PARAMS.simSpeed;
+  sim.update(dt);
+  renderScene(time / 1000);
   updateHUD();
-  if (!endTriggered && sim.simTime >= sim.sessionDuration) {
-    endTriggered = true;
-    showEndScreen();
-  }
 }
 
-function renderScene() {
+function createIceTexture() {
+  iceTexture = game.scene.scenes[0].add.graphics();
+  iceTexture.clear();
+  iceTexture.fillStyle(0x18324b, 1);
+  iceTexture.fillRect(0, 0, PARAMS.width, PARAMS.height);
+  const gradientSteps = 8;
+  for (let i = 0; i < gradientSteps; i += 1) {
+    const alpha = 0.08;
+    const inset = 10 + i * 8;
+    iceTexture.fillStyle(0x21486b, alpha);
+    iceTexture.fillRoundedRect(
+      inset,
+      inset,
+      PARAMS.width - inset * 2,
+      PARAMS.height - inset * 2,
+      24
+    );
+  }
+  for (let i = 0; i < 35; i += 1) {
+    const x = rng.range(40, PARAMS.width - 40);
+    const y = rng.range(40, PARAMS.height - 40);
+    const length = rng.range(80, 200);
+    const angle = rng.range(0, Math.PI * 2);
+    const x2 = x + Math.cos(angle) * length;
+    const y2 = y + Math.sin(angle) * length;
+    iceTexture.lineStyle(1, 0x335f84, 0.35);
+    iceTexture.beginPath();
+    iceTexture.moveTo(x, y);
+    iceTexture.lineTo(x2, y2);
+    iceTexture.strokePath();
+  }
+  iceTexture.lineStyle(4, 0x79b4d6, 0.6);
+  iceTexture.strokeRoundedRect(10, 10, PARAMS.width - 20, PARAMS.height - 20, 26);
+}
+
+function renderScene(time) {
   graphics.clear();
-  densityGraphics.clear();
-  fishGraphics.clear();
-  labelGraphics.clear();
-
-  graphics.fillStyle(0x12314a, 1);
+  graphics.fillStyle(0x17293f, 1);
   graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
-  graphics.lineStyle(3, 0x7fd2ff, 0.4);
-  graphics.strokeRect(4, 4, PARAMS.width - 8, PARAMS.height - 8);
+  iceTexture.setVisible(true);
 
-  if (uiState.showFish) {
-    drawFishOverlay();
-  }
-  if (uiState.showDensity) {
-    drawDensityOverlay();
-  }
-  if (uiState.showTrails) {
-    drawTrails();
-  }
-  drawAgents();
+  drawHoles();
+  drawAgents(time);
 }
 
-function drawAgents() {
+function drawHoles() {
+  sim.holes.forEach((hole) => {
+    graphics.fillStyle(0x0b1420, 1);
+    graphics.fillCircle(hole.x, hole.y, 6);
+    graphics.lineStyle(2, 0x6aaed6, 0.6);
+    graphics.strokeCircle(hole.x, hole.y, 8);
+  });
+}
+
+function drawAgents(time) {
   sim.agents.forEach((agent) => {
-    const color = agent.isPlayer ? 0xfff275 : 0x6ba9d6;
-    const outline = agent.isPlayer ? 0xffb703 : 0x3a6c91;
-    const radius = agent.isPlayer ? 6 : 4.5;
-    graphics.fillStyle(color, 1);
-    graphics.fillCircle(agent.x, agent.y, radius);
-    graphics.lineStyle(2, outline, 0.8);
-    graphics.strokeCircle(agent.x, agent.y, radius + 1);
-    if (uiState.showLabels && !agent.isPlayer) {
-      labelGraphics.fillStyle(agent.state === STATE.FISHING ? 0x45ffb1 : 0xffc857, 1);
-      labelGraphics.fillRect(agent.x + 6, agent.y - 8, 4, 4);
+    const bodyColor = agent.isPlayer ? 0xffe18a : 0x7bb7d9;
+    const outline = agent.isPlayer ? 0xffb703 : 0x497ba3;
+    const size = agent.isPlayer ? 8 : 6;
+    const headSize = agent.isPlayer ? 3.5 : 3;
+
+    graphics.fillStyle(bodyColor, 1);
+    graphics.fillEllipse(agent.x, agent.y, size * 2, size * 1.6);
+    graphics.fillCircle(agent.x, agent.y - size * 0.9, headSize);
+    graphics.lineStyle(2, outline, 0.9);
+    graphics.strokeEllipse(agent.x, agent.y, size * 2.2, size * 1.8);
+
+    if (agent.state === STATE.DRILLING) {
+      drawAuger(agent, time);
+      drawDrillProgress(agent);
     }
     if (agent.state === STATE.FISHING) {
-      graphics.lineStyle(1, 0xffffff, 0.2);
-      graphics.strokeCircle(agent.x, agent.y, radius + 4);
+      drawFishingLine(agent, time);
     }
   });
 }
 
-function drawTrails() {
-  sim.agents.forEach((agent) => {
-    if (agent.trail.length < 2) return;
-    graphics.lineStyle(1, agent.isPlayer ? 0xfff275 : 0x4b6b82, agent.isPlayer ? 0.6 : 0.3);
-    graphics.beginPath();
-    graphics.moveTo(agent.trail[0].x, agent.trail[0].y);
-    for (let i = 1; i < agent.trail.length; i += 1) {
-      graphics.lineTo(agent.trail[i].x, agent.trail[i].y);
-    }
-    graphics.strokePath();
-  });
+function drawAuger(agent, time) {
+  const radius = 8;
+  const angle = time * 6 + agent.id;
+  const x2 = agent.x + Math.cos(angle) * radius;
+  const y2 = agent.y + Math.sin(angle) * radius;
+  graphics.lineStyle(2, 0xe0f7ff, 0.8);
+  graphics.beginPath();
+  graphics.moveTo(agent.x, agent.y);
+  graphics.lineTo(x2, y2);
+  graphics.strokePath();
 }
 
-function drawDensityOverlay() {
-  const gridSize = 20;
-  for (let x = 0; x < PARAMS.width; x += gridSize) {
-    for (let y = 0; y < PARAMS.height; y += gridSize) {
-      const count = sim.spatialHash.countWithin(x + gridSize / 2, y + gridSize / 2, 50);
-      const intensity = Phaser.Math.Clamp(count / 8, 0, 1);
-      if (intensity <= 0) continue;
-      densityGraphics.fillStyle(0x4efff2, intensity * 0.5);
-      densityGraphics.fillRect(x, y, gridSize, gridSize);
-    }
-  }
+function drawDrillProgress(agent) {
+  const progress = 1 - agent.drillTimer / PARAMS.drillTime;
+  graphics.lineStyle(3, 0x9bd9ff, 0.8);
+  graphics.beginPath();
+  graphics.arc(agent.x, agent.y, 12, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+  graphics.strokePath();
 }
 
-function drawFishOverlay() {
-  const cellW = PARAMS.width / PARAMS.fishGridCols;
-  const cellH = PARAMS.height / PARAMS.fishGridRows;
-  for (let row = 0; row < PARAMS.fishGridRows; row += 1) {
-    for (let col = 0; col < PARAMS.fishGridCols; col += 1) {
-      const value = sim.fishField.grid[row * PARAMS.fishGridCols + col];
-      if (value <= 0.02) continue;
-      fishGraphics.fillStyle(0x80ff6b, value * 0.6);
-      fishGraphics.fillRect(col * cellW, row * cellH, cellW, cellH);
-    }
-  }
+function drawFishingLine(agent, time) {
+  const bobOffset = Math.sin(time * 2 + agent.id) * 2;
+  graphics.lineStyle(1, 0xd5f3ff, 0.6);
+  graphics.beginPath();
+  graphics.moveTo(agent.x, agent.y + 6);
+  graphics.lineTo(agent.x, agent.y + 16 + bobOffset);
+  graphics.strokePath();
+  graphics.fillStyle(0xff6b6b, 1);
+  graphics.fillCircle(agent.x, agent.y + 18 + bobOffset, 2.5);
 }
 
 function setupUI() {
   UI.timer = document.getElementById("timer");
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
-  UI.gut = document.getElementById("player-gut");
-  UI.debugPanel = document.getElementById("debug-panel");
-  UI.debugPlayerSpeed = document.getElementById("debug-player-speed");
-  UI.debugNpcSpeed = document.getElementById("debug-npc-speed");
-  UI.debugOob = document.getElementById("debug-oob");
+  UI.gutPanel = document.getElementById("gut-panel");
+  UI.gutPressure = document.getElementById("gut-pressure");
+  UI.gutTime = document.getElementById("gut-time");
+  UI.gutAnchor = document.getElementById("gut-anchor");
+  UI.gutCrowd = document.getElementById("gut-crowd");
+  UI.gutEvents = document.getElementById("gut-events");
 
-  bindToggle("show-density", (val) => (uiState.showDensity = val));
-  bindToggle("show-fish", (val) => (uiState.showFish = val));
-  bindToggle("show-trails", (val) => (uiState.showTrails = val), true);
-  bindToggle("show-labels", (val) => (uiState.showLabels = val));
-  bindToggle("show-debug", (val) => {
-    uiState.showDebug = val;
-    UI.debugPanel.classList.toggle("hidden", !val);
-  });
-  bindToggle("freeze-toggle", (val) => (uiState.freeze = val));
-  bindToggle("autopilot-toggle", (val) => (uiState.autopilot = val));
-
-  document.getElementById("step-btn").addEventListener("click", () => {
-    uiState.step = true;
-  });
-  document.getElementById("move-now").addEventListener("click", () => {
-    if (uiState.autopilot) return;
-    sim.player.state = STATE.WALKING;
-    sim.pickDestination(sim.player);
-  });
-  document.getElementById("reset-btn").addEventListener("click", () => {
-    applyInputs();
-    resetSimulation();
-  });
-  document.getElementById("restart-same").addEventListener("click", () => {
-    resetSimulation();
-    hideEndScreen();
-  });
-  document.getElementById("restart-new").addEventListener("click", () => {
-    PARAMS.seed = `${PARAMS.seed}-${Math.floor(Date.now() % 10000)}`;
-    document.getElementById("seed").value = PARAMS.seed;
-    resetSimulation();
-    hideEndScreen();
+  document.getElementById("drill-btn").addEventListener("click", () => {
+    const player = sim.player;
+    if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
+    player.state = STATE.DRILLING;
+    player.drillTimer = PARAMS.drillTime;
   });
 
-  bindParam("npc-count", "npcCount");
-  bindParam("social-strength", "socialStrength");
-  bindParam("social-multiplier", "socialMultiplier");
-  bindParam("gut-k", "gutK");
-  bindParam("anchor-strength", "anchorStrength");
-  bindParam("patchiness", "patchiness");
-  bindParam("depletion", "depletion");
-  bindParam("recovery", "recovery");
-  bindParam("time-scale", "timeScale");
-  const seedInput = document.getElementById("seed");
-  seedInput.addEventListener("change", () => {
-    PARAMS.seed = seedInput.value.trim() || "ice-lake-01";
+  document.getElementById("fish-btn").addEventListener("click", () => {
+    const player = sim.player;
+    if (player.state === STATE.FISHING) return;
+    if (!player.hasHole) return;
+    if (player.state === STATE.WALKING || player.state === STATE.DRILLING) return;
+    const distance = Math.hypot(player.x - player.hole.x, player.y - player.hole.y);
+    if (distance > 6) return;
+    player.state = STATE.FISHING;
   });
-  refreshParamLabels();
-}
 
-function bindToggle(id, handler, defaultValue = false) {
-  const el = document.getElementById(id);
-  el.checked = defaultValue;
-  handler(el.checked);
-  el.addEventListener("change", () => handler(el.checked));
-}
-
-function bindParam(id, key) {
-  const el = document.getElementById(id);
-  el.addEventListener("input", () => {
-    PARAMS[key] = parseFloat(el.value);
-    refreshParamLabels();
+  document.getElementById("stop-btn").addEventListener("click", () => {
+    const player = sim.player;
+    if (player.state === STATE.DRILLING) {
+      player.state = STATE.IDLE;
+      player.drillTimer = 0;
+      return;
+    }
+    if (player.state === STATE.FISHING) {
+      player.state = STATE.READY;
+      return;
+    }
   });
-}
 
-function refreshParamLabels() {
-  document.getElementById("npc-count-value").textContent = PARAMS.npcCount;
-  document.getElementById("social-strength-value").textContent = PARAMS.socialStrength.toFixed(2);
-  document.getElementById("social-multiplier-value").textContent =
-    PARAMS.socialMultiplier.toFixed(2);
-  document.getElementById("gut-k-value").textContent = PARAMS.gutK.toFixed(3);
-  document.getElementById("anchor-strength-value").textContent = PARAMS.anchorStrength.toFixed(1);
-  document.getElementById("patchiness-value").textContent = PARAMS.patchiness;
-  document.getElementById("depletion-value").textContent = PARAMS.depletion.toFixed(2);
-  document.getElementById("recovery-value").textContent = PARAMS.recovery.toFixed(3);
-  document.getElementById("time-scale-value").textContent = PARAMS.timeScale;
-}
+  const simSpeed = document.getElementById("sim-speed");
+  const simSpeedValue = document.getElementById("sim-speed-value");
+  simSpeed.addEventListener("input", () => {
+    PARAMS.simSpeed = parseFloat(simSpeed.value);
+    simSpeedValue.textContent = `${PARAMS.simSpeed.toFixed(1)}x`;
+  });
 
-function applyInputs() {
-  PARAMS.npcCount = parseInt(document.getElementById("npc-count").value, 10);
-  PARAMS.socialStrength = parseFloat(document.getElementById("social-strength").value);
-  PARAMS.socialMultiplier = parseFloat(document.getElementById("social-multiplier").value);
-  PARAMS.gutK = parseFloat(document.getElementById("gut-k").value);
-  PARAMS.anchorStrength = parseFloat(document.getElementById("anchor-strength").value);
-  PARAMS.patchiness = parseInt(document.getElementById("patchiness").value, 10);
-  PARAMS.depletion = parseFloat(document.getElementById("depletion").value);
-  PARAMS.recovery = parseFloat(document.getElementById("recovery").value);
-  PARAMS.timeScale = parseFloat(document.getElementById("time-scale").value);
-  PARAMS.seed = document.getElementById("seed").value.trim() || "ice-lake-01";
+  document.getElementById("show-gut").addEventListener("change", (event) => {
+    uiState.showGut = event.target.checked;
+    UI.gutPanel.classList.toggle("hidden", !uiState.showGut);
+  });
 }
 
 function resetSimulation() {
   rng = new RNG(PARAMS.seed);
-  sim = new Simulation(game.scene.scenes[0], rng, PARAMS);
-  endTriggered = false;
+  sim = new Simulation(game.scene.scenes[0], rng);
   lastFrameTime = 0;
 }
 
 function updateHUD() {
-  const remaining = Math.max(0, sim.sessionDuration - sim.simTime);
-  const min = Math.floor(remaining / 60)
+  const min = Math.floor(sim.simTime / 60)
     .toString()
     .padStart(2, "0");
-  const sec = Math.floor(remaining % 60)
+  const sec = Math.floor(sim.simTime % 60)
     .toString()
     .padStart(2, "0");
   UI.timer.textContent = `${min}:${sec}`;
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
-  UI.gut.textContent = `${Math.floor(sim.player.timeSinceLastCatch)}s`;
-  if (uiState.showDebug) {
-    UI.debugPlayerSpeed.textContent = sim.speedStats.playerSpeed.toFixed(1);
-    UI.debugNpcSpeed.textContent = sim.speedStats.npcSpeed.toFixed(1);
-    UI.debugOob.textContent = sim.speedStats.oobRate.toFixed(1);
+  if (uiState.showGut) {
+    updateGutPanel();
   }
 }
 
@@ -783,68 +679,33 @@ function estimateRank(playerCatches) {
   return rank ? `~${rank}/${sorted.length}` : "-";
 }
 
-function showEndScreen() {
-  const endScreen = document.getElementById("end-screen");
-  endScreen.classList.remove("hidden");
-  renderAnalytics();
-}
-
-function hideEndScreen() {
-  document.getElementById("end-screen").classList.add("hidden");
-}
-
-function renderAnalytics() {
-  const leaderboard = document.getElementById("leaderboard");
-  leaderboard.innerHTML = "";
-  const sorted = [...sim.agents].sort((a, b) => b.catchesTotal - a.catchesTotal);
-  sorted.slice(0, 11).forEach((agent) => {
-    const item = document.createElement("li");
-    const label = agent.isPlayer ? "Player" : `NPC ${agent.id}`;
-    item.textContent = `${label} — ${agent.catchesTotal} catches`;
-    leaderboard.appendChild(item);
-  });
-
-  const avgCluster =
-    sim.clusterSamples.reduce((sum, val) => sum + val, 0) / sim.clusterSamples.length;
-  const playerMoveAvg = sim.player.moveCount
-    ? sim.player.moveDistanceTotal / sim.player.moveCount
-    : 0;
-  const npcMoves = sim.agents.filter((agent) => !agent.isPlayer);
-  const npcMoveAvg =
-    npcMoves.reduce((sum, agent) => sum + agent.moveDistanceTotal, 0) /
-    Math.max(1, npcMoves.reduce((sum, agent) => sum + agent.moveCount, 0));
-  const summary = document.getElementById("summary");
-  summary.innerHTML = "";
-  addSummary(`Avg cluster size`, avgCluster.toFixed(2));
-  addSummary(
-    `Player time moving`,
-    `${Math.floor(sim.player.timeMoving)}s (${Math.floor(
-      (sim.player.timeMoving / (sim.player.timeMoving + sim.player.timeFishing)) * 100
-    )}%)`
+function updateGutPanel() {
+  const player = sim.player;
+  const localDensity = sim.spatialHash.countWithin(
+    player.x,
+    player.y,
+    PARAMS.neighborRadius,
+    player.id
   );
-  addSummary(`Player avg move length`, `${playerMoveAvg.toFixed(1)} px`);
-  addSummary(`NPC avg move length`, `${npcMoveAvg.toFixed(1)} px`);
-  drawOccupancyHeatmap();
-}
+  const anchorBonus = player.hasCaughtHere ? PARAMS.anchorStrength : 0;
+  const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
+  const leaveScore = PARAMS.gutK * player.timeSinceLastCatch - anchorBonus + crowdBonus;
+  const pressure = 1 / (1 + Math.exp(-leaveScore));
+  UI.gutPressure.textContent = pressure.toFixed(2);
+  UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
+  UI.gutAnchor.textContent = player.hasCaughtHere ? "ON" : "OFF";
+  UI.gutCrowd.textContent = localDensity;
 
-function addSummary(label, value) {
-  const summary = document.getElementById("summary");
-  const div = document.createElement("div");
-  div.innerHTML = `<strong>${label}</strong><br />${value}`;
-  summary.appendChild(div);
-}
-
-function drawOccupancyHeatmap() {
-  const maxVal = Math.max(...sim.occupancy);
-  occupancyCtx.clearRect(0, 0, occupancyCanvas.width, occupancyCanvas.height);
-  const cellW = occupancyCanvas.width / PARAMS.fishGridCols;
-  const cellH = occupancyCanvas.height / PARAMS.fishGridRows;
-  for (let row = 0; row < PARAMS.fishGridRows; row += 1) {
-    for (let col = 0; col < PARAMS.fishGridCols; col += 1) {
-      const value = sim.occupancy[row * PARAMS.fishGridCols + col] / maxVal;
-      if (value <= 0) continue;
-      occupancyCtx.fillStyle = `rgba(95, 209, 255, ${value})`;
-      occupancyCtx.fillRect(col * cellW, row * cellH, cellW, cellH);
-    }
+  UI.gutEvents.innerHTML = "";
+  if (sim.gutEvents.length === 0) {
+    const empty = document.createElement("div");
+    empty.textContent = "Time passes without a catch: pressure rises.";
+    UI.gutEvents.appendChild(empty);
+  } else {
+    sim.gutEvents.forEach((event) => {
+      const line = document.createElement("div");
+      line.textContent = `[${event.timestamp}s] ${event.text}`;
+      UI.gutEvents.appendChild(line);
+    });
   }
 }
