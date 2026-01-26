@@ -31,10 +31,16 @@ body {
 }
 
 #game {
+  position: relative;
+  z-index: 1;
   border: 3px solid #2c4a66;
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+#game canvas {
+  display: block;
 }
 
 #overlay {
@@ -45,6 +51,7 @@ body {
   flex-direction: column;
   gap: 12px;
   pointer-events: none;
+  z-index: 3;
 }
 
 .hud,
@@ -55,6 +62,7 @@ body {
   border-radius: 12px;
   font-size: 13px;
   line-height: 1.6;
+  pointer-events: auto;
 }
 
 .time-scale {
