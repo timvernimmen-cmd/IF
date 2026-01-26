@@ -3,15 +3,15 @@ const PARAMS = {
   height: 540,
   mapMargin: 16,
   npcCount: 9,
-  npcSpeed: 55,
-  playerSpeed: 65,
-  drillTime: 1.7,
-  baseCatchRate: 0.02,
+  npcSpeed: 25,
+  playerSpeed: 30,
+  drillTime: 5,
+  baseCatchRate: 0.06,
   holeRadius: 7,
   minHoleSpacing: 30,
-  minDwell: 25,
-  targetDwell: 35,
-  leaveCheckInterval: 2,
+  minDwell: 20,
+  targetDwell: 40,
+  leaveCheckInterval: 10,
   fishGridCols: 80,
   fishGridRows: 50,
   patchiness: 6,
@@ -25,7 +25,7 @@ const PARAMS = {
   inertiaWeight: 0.4,
   socialStrength: 0.9,
   socialMultiplier: 1.6,
-  successWindow: 32,
+  successWindow: 40,
   maxMoveDistance: 220,
   minMoveDistance: 40,
   candidateCount: 30,
@@ -33,6 +33,8 @@ const PARAMS = {
   timeScale: 18,
   socialWindow: 420,
   socialCueWeight: 0.2,
+  gutTau: 100,
+  neighborSuccessSuppress: 40,
   forbiddenZone: { x: 0, y: 0, w: 320, h: 330 },
   devMode: false,
   seed: "ice-lake-01",
@@ -259,6 +261,9 @@ class Agent {
     this.recentSuccessTimer = 0;
     this.drillTimer = 0;
     this.leaveCheckTimer = 0;
+    this.gutTimer = 0;
+    this.anchorUntil = 0;
+    this.suppressLeaveUntil = 0;
     this.hasHole = false;
     this.hole = null;
     this.reservedSpot = null;
@@ -409,6 +414,7 @@ class Simulation {
       agent.lastCatchTime = this.simTime;
       agent.hasCaughtHere = true;
       agent.recentSuccessTimer = PARAMS.successWindow;
+      agent.anchorUntil = this.simTime + PARAMS.successWindow;
       this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
       this.spawnCatchEffects(agent);
       this.recordSuccessEvent(agent);
@@ -424,6 +430,9 @@ class Simulation {
       if (agent.timeAtCurrentSpot < PARAMS.minDwell) {
         return;
       }
+      if (this.simTime < agent.suppressLeaveUntil) {
+        return;
+      }
       if (agent.leaveCheckTimer < PARAMS.leaveCheckInterval) {
         return;
       }
@@ -435,14 +444,15 @@ class Simulation {
         agent.id
       );
       const nearbyRecentSuccessCount = this.countNearbyRecentSuccesses(agent);
-      const anchorBonus = agent.hasCaughtHere ? PARAMS.anchorStrength : 0;
+      const anchorBonus = this.simTime < agent.anchorUntil ? PARAMS.anchorStrength : 0;
       const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
-      const dwellFactor = Math.max(0, PARAMS.targetDwell - agent.timeAtCurrentSpot) * -0.03;
+      const dwellFactor = Math.max(0, PARAMS.targetDwell - agent.timeAtCurrentSpot) * -0.02;
       const mode = this.getMovementMode(agent);
       const socialSuccessTerm =
         mode === MODE.SUCCESS_LOOP ? -PARAMS.socialCueWeight * nearbyRecentSuccessCount : 0;
+      const timeTerm = agent.timeSinceLastCatch / PARAMS.gutTau;
       const leaveScore =
-        PARAMS.gutK * agent.timeSinceLastCatch -
+        timeTerm -
         anchorBonus +
         crowdBonus +
         dwellFactor +
@@ -493,6 +503,7 @@ class Simulation {
     const dy = catchingAgent.y - player.y;
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
+      player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
       this.pushGutEvent(
         `Neighbor caught a fish nearby (within ${Math.round(
           PARAMS.neighborRadius
@@ -518,14 +529,14 @@ class Simulation {
     let distanceMean;
     let turnRange;
     if (mode === MODE.SUCCESS_LOOP) {
-      distanceMean = Phaser.Math.Linear(18, 40, 1 - failureFactor);
-      distanceMean *= 1 - densityFactor * 0.25 - successBoost * 0.08;
-      turnRange = Phaser.Math.DegToRad(120 + densityFactor * 40);
+      distanceMean = Phaser.Math.Linear(8, 20, 1 - failureFactor);
+      distanceMean *= 1 - densityFactor * 0.3 - successBoost * 0.1;
+      turnRange = Phaser.Math.DegToRad(90);
     } else {
-      distanceMean = Phaser.Math.Linear(120, 220, failureFactor);
-      turnRange = Phaser.Math.DegToRad(20 + (1 - failureFactor) * 10);
+      distanceMean = Phaser.Math.Linear(80, 200, failureFactor);
+      turnRange = Phaser.Math.DegToRad(20);
     }
-    distanceMean = Phaser.Math.Clamp(distanceMean, 12, PARAMS.maxMoveDistance);
+    distanceMean = Phaser.Math.Clamp(distanceMean, 5, PARAMS.maxMoveDistance);
     let best = null;
     let bestScore = -Infinity;
     for (let i = 0; i < PARAMS.candidateCount; i += 1) {
@@ -554,7 +565,8 @@ class Simulation {
         }
       }
       const distance =
-        distanceMean + this.rng.range(mode === MODE.SUCCESS_LOOP ? -8 : -20, mode === MODE.SUCCESS_LOOP ? 20 : 60);
+        distanceMean +
+        this.rng.range(mode === MODE.SUCCESS_LOOP ? -4 : -20, mode === MODE.SUCCESS_LOOP ? 12 : 40);
       const angle = agent.lastMoveDirectionAngle + this.rng.range(-turnRange, turnRange);
       const rawX = agent.x + Math.cos(angle) * distance;
       const rawY = agent.y + Math.sin(angle) * distance;
@@ -666,7 +678,7 @@ class Simulation {
     if (agent.timeSinceLastCatch < PARAMS.successWindow) {
       return null;
     }
-    const radius = 260;
+    const radius = 80;
     const now = this.simTime;
     let totalWeight = 0;
     let sumX = 0;
@@ -740,6 +752,13 @@ function create() {
     if (!player) return;
     if (player.state === STATE.DRILLING || player.state === STATE.FISHING) {
       showStatus("Finish drilling or stop fishing before moving.");
+      return;
+    }
+    const target = pointer.event?.target;
+    if (
+      target?.closest?.("#ui-panel") ||
+      ["BUTTON", "INPUT", "LABEL", "SELECT", "TEXTAREA"].includes(target?.tagName)
+    ) {
       return;
     }
     if (sim.isInForbidden(pointer.x, pointer.y)) {
@@ -1073,10 +1092,10 @@ function updateGutPanel() {
     if (dist2 > PARAMS.neighborRadius * PARAMS.neighborRadius) return false;
     return sim.simTime - agent.lastCatchTime <= PARAMS.socialWindow;
   }).length;
-  const anchorBonus = player.hasCaughtHere ? PARAMS.anchorStrength : 0;
+  const anchorBonus = sim.simTime < player.anchorUntil ? PARAMS.anchorStrength : 0;
   const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
   const socialCue = -PARAMS.socialCueWeight * nearbyRecentSuccessCount;
-  const timeTerm = PARAMS.gutK * player.timeSinceLastCatch;
+  const timeTerm = player.timeSinceLastCatch / PARAMS.gutTau;
   const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
   const mode = sim.getMovementMode(player);
@@ -1114,7 +1133,9 @@ function updateGutPanel() {
   const globalLine = document.createElement("div");
   globalLine.textContent = `Global success signal: ${
     globalSignal
-      ? `${globalSignal.strength.toFixed(2)} (age ${Math.round(globalSignal.age)}s)`
+      ? `${globalSignal.strength.toFixed(2)} (age ${Math.round(globalSignal.age)}s, ${
+          globalSignal.agentId === player.id ? "player" : "npc"
+        })`
       : "none"
   }`;
   const breakdown = document.createElement("div");
