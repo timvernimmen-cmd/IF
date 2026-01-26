@@ -436,6 +436,7 @@ class Simulation {
 
 const uiState = {
   showGut: false,
+  showDebug: false,
 };
 
 const config = {
@@ -457,7 +458,7 @@ let sim;
 let graphics;
 let lastFrameTime = 0;
 let rng;
-let iceTexture;
+let crackLines = [];
 
 function preload() {}
 
@@ -465,7 +466,6 @@ function create() {
   graphics = this.add.graphics();
   setupUI();
   resetSimulation();
-  createIceTexture();
   this.input.on("pointerdown", (pointer) => {
     const player = sim.player;
     if (player.state === STATE.DRILLING || player.state === STATE.FISHING) return;
@@ -487,17 +487,23 @@ function update(time) {
   updateHUD();
 }
 
-function createIceTexture() {
-  iceTexture = game.scene.scenes[0].add.graphics();
-  iceTexture.clear();
-  iceTexture.fillStyle(0x18324b, 1);
-  iceTexture.fillRect(0, 0, PARAMS.width, PARAMS.height);
+function renderScene(time) {
+  graphics.clear();
+  drawLakeBackground();
+  drawHoles();
+  drawAgents(time);
+  drawDebugDots();
+}
+
+function drawLakeBackground() {
+  graphics.fillStyle(0x18324b, 1);
+  graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
   const gradientSteps = 8;
   for (let i = 0; i < gradientSteps; i += 1) {
     const alpha = 0.08;
     const inset = 10 + i * 8;
-    iceTexture.fillStyle(0x21486b, alpha);
-    iceTexture.fillRoundedRect(
+    graphics.fillStyle(0x21486b, alpha);
+    graphics.fillRoundedRect(
       inset,
       inset,
       PARAMS.width - inset * 2,
@@ -505,31 +511,15 @@ function createIceTexture() {
       24
     );
   }
-  for (let i = 0; i < 35; i += 1) {
-    const x = rng.range(40, PARAMS.width - 40);
-    const y = rng.range(40, PARAMS.height - 40);
-    const length = rng.range(80, 200);
-    const angle = rng.range(0, Math.PI * 2);
-    const x2 = x + Math.cos(angle) * length;
-    const y2 = y + Math.sin(angle) * length;
-    iceTexture.lineStyle(1, 0x335f84, 0.35);
-    iceTexture.beginPath();
-    iceTexture.moveTo(x, y);
-    iceTexture.lineTo(x2, y2);
-    iceTexture.strokePath();
-  }
-  iceTexture.lineStyle(4, 0x79b4d6, 0.6);
-  iceTexture.strokeRoundedRect(10, 10, PARAMS.width - 20, PARAMS.height - 20, 26);
-}
-
-function renderScene(time) {
-  graphics.clear();
-  graphics.fillStyle(0x17293f, 1);
-  graphics.fillRect(0, 0, PARAMS.width, PARAMS.height);
-  iceTexture.setVisible(true);
-
-  drawHoles();
-  drawAgents(time);
+  crackLines.forEach((line) => {
+    graphics.lineStyle(1, 0x335f84, 0.35);
+    graphics.beginPath();
+    graphics.moveTo(line.x1, line.y1);
+    graphics.lineTo(line.x2, line.y2);
+    graphics.strokePath();
+  });
+  graphics.lineStyle(4, 0x79b4d6, 0.6);
+  graphics.strokeRoundedRect(10, 10, PARAMS.width - 20, PARAMS.height - 20, 26);
 }
 
 function drawHoles() {
@@ -561,6 +551,14 @@ function drawAgents(time) {
     if (agent.state === STATE.FISHING) {
       drawFishingLine(agent, time);
     }
+  });
+}
+
+function drawDebugDots() {
+  if (!uiState.showDebug) return;
+  sim.agents.forEach((agent) => {
+    graphics.fillStyle(agent.isPlayer ? 0xff00ff : 0x00ffea, 0.8);
+    graphics.fillCircle(agent.x, agent.y, agent.isPlayer ? 10 : 8);
   });
 }
 
@@ -647,11 +645,33 @@ function setupUI() {
     uiState.showGut = event.target.checked;
     UI.gutPanel.classList.toggle("hidden", !uiState.showGut);
   });
+
+  document.getElementById("show-debug").addEventListener("change", (event) => {
+    uiState.showDebug = event.target.checked;
+  });
 }
 
 function resetSimulation() {
   rng = new RNG(PARAMS.seed);
   sim = new Simulation(game.scene.scenes[0], rng);
+  crackLines = Array.from({ length: 35 }, () => {
+    const x1 = rng.range(40, PARAMS.width - 40);
+    const y1 = rng.range(40, PARAMS.height - 40);
+    const length = rng.range(80, 200);
+    const angle = rng.range(0, Math.PI * 2);
+    return {
+      x1,
+      y1,
+      x2: x1 + Math.cos(angle) * length,
+      y2: y1 + Math.sin(angle) * length,
+    };
+  });
+  const npcPositions = sim.agents.filter((agent) => !agent.isPlayer);
+  console.info("Player start:", { x: sim.player.x, y: sim.player.y });
+  console.info(
+    "NPC starts:",
+    npcPositions.map((agent) => ({ id: agent.id, x: agent.x, y: agent.y }))
+  );
   lastFrameTime = 0;
 }
 
