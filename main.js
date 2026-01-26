@@ -30,6 +30,9 @@ const PARAMS = {
   minMoveDistance: 40,
   candidateCount: 30,
   simSpeed: 1,
+  timeScale: 8,
+  socialWindow: 420,
+  socialCueWeight: 0.2,
   seed: "ice-lake-01",
 };
 
@@ -143,30 +146,60 @@ class FishField {
     this.rng = rng;
     this.grid = new Array(cols * rows).fill(0);
     this.baseline = new Array(cols * rows).fill(0);
-    this.initPatches();
+    this.depthField = new Array(cols * rows).fill(0);
+    this.roughness = new Array(cols * rows).fill(0);
+    this.initHabitat();
   }
   index(col, row) {
     return row * this.cols + col;
   }
-  initPatches() {
-    const patches = PARAMS.patchiness;
-    const sigma = Math.min(this.width, this.height) * 0.16;
-    const centers = Array.from({ length: patches }, () => ({
+  initHabitat() {
+    const basins = Math.max(3, Math.floor(PARAMS.patchiness * 0.6));
+    const sigma = Math.min(this.width, this.height) * 0.25;
+    const centers = Array.from({ length: basins }, () => ({
       x: this.rng.range(PARAMS.mapMargin, this.width - PARAMS.mapMargin),
       y: this.rng.range(PARAMS.mapMargin, this.height - PARAMS.mapMargin),
+      depth: this.rng.range(0.4, 1.0),
     }));
     for (let row = 0; row < this.rows; row += 1) {
       for (let col = 0; col < this.cols; col += 1) {
-        let value = 0.03 * this.rng.next();
-        for (let i = 0; i < patches; i += 1) {
-          const dx = (col / this.cols) * this.width - centers[i].x;
-          const dy = (row / this.rows) * this.height - centers[i].y;
+        let depth = 0.15;
+        centers.forEach((center) => {
+          const dx = (col / this.cols) * this.width - center.x;
+          const dy = (row / this.rows) * this.height - center.y;
           const dist2 = dx * dx + dy * dy;
-          value += Math.exp(-dist2 / (2 * sigma * sigma));
-        }
-        value = Math.min(1, value / (patches * 0.9));
-        this.grid[this.index(col, row)] = value;
-        this.baseline[this.index(col, row)] = value;
+          depth += center.depth * Math.exp(-dist2 / (2 * sigma * sigma));
+        });
+        depth += this.rng.range(-0.03, 0.03);
+        this.depthField[this.index(col, row)] = Phaser.Math.Clamp(depth, 0, 1);
+      }
+    }
+    for (let row = 1; row < this.rows - 1; row += 1) {
+      for (let col = 1; col < this.cols - 1; col += 1) {
+        const idx = this.index(col, row);
+        const dC = this.depthField[idx];
+        const dL = this.depthField[this.index(col - 1, row)];
+        const dR = this.depthField[this.index(col + 1, row)];
+        const dU = this.depthField[this.index(col, row - 1)];
+        const dD = this.depthField[this.index(col, row + 1)];
+        const gradX = (dR - dL) * 0.5;
+        const gradY = (dD - dU) * 0.5;
+        const gradMag = Math.sqrt(gradX * gradX + gradY * gradY);
+        const laplacian = dL + dR + dU + dD - 4 * dC;
+        const roughness = Math.abs(laplacian) + gradMag;
+        this.roughness[idx] = roughness;
+      }
+    }
+    const roughVals = this.roughness.filter((v) => Number.isFinite(v));
+    const maxRough = Math.max(...roughVals, 0.0001);
+    for (let row = 0; row < this.rows; row += 1) {
+      for (let col = 0; col < this.cols; col += 1) {
+        const idx = this.index(col, row);
+        const roughness = this.roughness[idx] / maxRough;
+        const noise = this.rng.range(-0.05, 0.05);
+        const baseline = Phaser.Math.Clamp(0.12 + 0.75 * roughness + noise, 0, 1);
+        this.grid[idx] = baseline;
+        this.baseline[idx] = baseline;
       }
     }
   }
@@ -212,6 +245,7 @@ class Agent {
     this.speed = isPlayer ? PARAMS.playerSpeed : PARAMS.npcSpeed;
     this.catchesTotal = 0;
     this.timeSinceLastCatch = 0;
+    this.lastCatchTime = -Infinity;
     this.hasCaughtHere = false;
     this.timeAtCurrentSpot = 0;
     this.lastMoveDirectionAngle = 0;
@@ -354,6 +388,7 @@ class Simulation {
     if (this.rng.next() < catchProb) {
       agent.catchesTotal += 1;
       agent.timeSinceLastCatch = 0;
+      agent.lastCatchTime = this.simTime;
       agent.hasCaughtHere = true;
       agent.recentSuccessTimer = PARAMS.successWindow;
       this.fishField.deplete(agent.x, agent.y, PARAMS.depletion, 45);
@@ -411,7 +446,12 @@ class Simulation {
     const dy = catchingAgent.y - player.y;
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
-      this.pushGutEvent("Neighbor caught a fish nearby (pressure dips).", "neighbor");
+      this.pushGutEvent(
+        `Neighbor caught a fish nearby (within ${Math.round(
+          PARAMS.neighborRadius
+        )}m, within ${Math.round(PARAMS.socialWindow / 60)} min).`,
+        "neighbor"
+      );
     }
   }
   pickDestination(agent) {
@@ -542,7 +582,7 @@ function update(time) {
   if (!lastFrameTime) lastFrameTime = time;
   const rawDt = (time - lastFrameTime) / 1000;
   lastFrameTime = time;
-  const dt = Math.min(rawDt, 0.05) * PARAMS.simSpeed;
+  const dt = Math.min(rawDt, 0.05) * PARAMS.timeScale * PARAMS.simSpeed;
   lastDt = dt;
   sim.update(dt);
   renderScene(time / 1000);
@@ -656,20 +696,7 @@ function drawCatchEffects() {
     const alpha = 0.9 * (1 - progress);
     graphics.lineStyle(2, 0xaaf5ff, alpha);
     graphics.strokeCircle(effect.x, effect.y, radius);
-    const textY = effect.y - 20 - progress * 20;
-    graphics.lineStyle(2, 0xfff3a1, alpha);
-    graphics.beginPath();
-    graphics.moveTo(effect.x - 6, textY);
-    graphics.lineTo(effect.x - 2, textY);
-    graphics.strokePath();
-    graphics.beginPath();
-    graphics.moveTo(effect.x + 2, textY - 4);
-    graphics.lineTo(effect.x + 2, textY + 4);
-    graphics.strokePath();
-    graphics.beginPath();
-    graphics.moveTo(effect.x - 2, textY);
-    graphics.lineTo(effect.x + 6, textY);
-    graphics.strokePath();
+    drawFishIcon(effect);
     if (effect.isPlayer) {
       graphics.lineStyle(3, 0xffe08a, 0.6 * (1 - progress));
       graphics.strokeCircle(effect.x, effect.y, radius + 10);
@@ -677,8 +704,33 @@ function drawCatchEffects() {
   });
 }
 
+function drawFishIcon(effect) {
+  const progress = effect.timer / effect.duration;
+  const rise = 25 * progress;
+  const wiggle = Math.sin(progress * Math.PI * 6) * 0.2;
+  const size = effect.isPlayer ? 12 : 10;
+  const x = effect.x;
+  const y = effect.y - 18 - rise;
+  const alpha = 0.95 * (1 - progress);
+  graphics.save();
+  graphics.translate(x, y);
+  graphics.rotate(wiggle);
+  graphics.fillStyle(effect.isPlayer ? 0xfff3a1 : 0xb7f0ff, alpha);
+  graphics.fillEllipse(0, 0, size * 1.4, size);
+  graphics.beginPath();
+  graphics.moveTo(-size * 0.9, 0);
+  graphics.lineTo(-size * 1.5, -size * 0.5);
+  graphics.lineTo(-size * 1.5, size * 0.5);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.fillStyle(0x0b1220, alpha);
+  graphics.fillCircle(size * 0.4, -size * 0.2, 1.5);
+  graphics.restore();
+}
+
 function setupUI() {
   UI.timer = document.getElementById("timer");
+  UI.timeScaleLabel = document.getElementById("time-scale-label");
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
   UI.gutPanel = document.getElementById("gut-panel");
@@ -732,6 +784,7 @@ function setupUI() {
     PARAMS.simSpeed = parseFloat(simSpeed.value);
     simSpeedValue.textContent = `${PARAMS.simSpeed.toFixed(1)}x`;
   });
+  UI.timeScaleLabel.textContent = `(x${PARAMS.timeScale} accelerated)`;
 
   document.getElementById("show-gut").addEventListener("change", (event) => {
     uiState.showGut = event.target.checked;
@@ -799,9 +852,19 @@ function updateGutPanel() {
     PARAMS.neighborRadius,
     player.id
   );
+  const nearbyRecentSuccessCount = sim.agents.filter((agent) => {
+    if (agent.isPlayer) return false;
+    const dx = agent.x - player.x;
+    const dy = agent.y - player.y;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 > PARAMS.neighborRadius * PARAMS.neighborRadius) return false;
+    return sim.simTime - agent.lastCatchTime <= PARAMS.socialWindow;
+  }).length;
   const anchorBonus = player.hasCaughtHere ? PARAMS.anchorStrength : 0;
   const crowdBonus = localDensity * PARAMS.leaveCrowdEffect * -0.15;
-  const leaveScore = PARAMS.gutK * player.timeSinceLastCatch - anchorBonus + crowdBonus;
+  const socialCue = -PARAMS.socialCueWeight * nearbyRecentSuccessCount;
+  const timeTerm = PARAMS.gutK * player.timeSinceLastCatch;
+  const leaveScore = timeTerm - anchorBonus + crowdBonus + socialCue;
   const pressure = 1 / (1 + Math.exp(-leaveScore));
   UI.gutPressure.textContent = pressure.toFixed(2);
   UI.gutTime.textContent = `${Math.floor(player.timeSinceLastCatch)}s`;
@@ -820,4 +883,14 @@ function updateGutPanel() {
       UI.gutEvents.appendChild(line);
     });
   }
+  const breakdown = document.createElement("div");
+  breakdown.textContent = `Pressure = sigmoid(${timeTerm.toFixed(2)} - ${anchorBonus.toFixed(
+    2
+  )} + ${crowdBonus.toFixed(2)} + ${socialCue.toFixed(2)})`;
+  const detail = document.createElement("div");
+  detail.textContent = `Social cue: ${nearbyRecentSuccessCount} recent successes (window ${Math.round(
+    PARAMS.socialWindow / 60
+  )} min)`;
+  UI.gutEvents.appendChild(breakdown);
+  UI.gutEvents.appendChild(detail);
 }
