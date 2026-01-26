@@ -45,8 +45,7 @@ body {
 
 #overlay {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  inset: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -62,7 +61,6 @@ body {
   border-radius: 12px;
   font-size: 13px;
   line-height: 1.6;
-  pointer-events: auto;
 }
 
 .time-scale {
@@ -77,6 +75,12 @@ body {
   flex-direction: column;
   gap: 8px;
   min-width: 260px;
+}
+
+#overlay button,
+#overlay input,
+#overlay label {
+  pointer-events: auto;
 }
 
 .hint {

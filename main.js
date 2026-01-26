@@ -569,8 +569,12 @@ function create() {
   resetSimulation();
   setupUI();
   this.input.on("pointerdown", (pointer) => {
-    const player = sim.player;
-    if (player.state === STATE.DRILLING || player.state === STATE.FISHING) return;
+    const player = getPlayer();
+    if (!player) return;
+    if (player.state === STATE.DRILLING || player.state === STATE.FISHING) {
+      showStatus("Finish drilling or stop fishing before moving.");
+      return;
+    }
     const x = Phaser.Math.Clamp(pointer.x, PARAMS.mapMargin, PARAMS.width - PARAMS.mapMargin);
     const y = Phaser.Math.Clamp(pointer.y, PARAMS.mapMargin, PARAMS.height - PARAMS.mapMargin);
     player.destination = { x, y };
@@ -743,7 +747,8 @@ function setupUI() {
   UI.status = document.getElementById("status-message");
 
   document.getElementById("drill-btn").addEventListener("click", () => {
-    const player = sim.player;
+    const player = getPlayer();
+    if (!player) return;
     if (player.state !== STATE.IDLE && player.state !== STATE.READY) return;
     if (!sim.isHoleLocationValid(player.x, player.y)) {
       showStatus("Too close to another hole (ice stability). Move further away.");
@@ -756,7 +761,8 @@ function setupUI() {
   });
 
   document.getElementById("fish-btn").addEventListener("click", () => {
-    const player = sim.player;
+    const player = getPlayer();
+    if (!player) return;
     if (player.state === STATE.FISHING) return;
     if (!player.hasHole) return;
     if (player.state === STATE.WALKING || player.state === STATE.DRILLING) return;
@@ -766,7 +772,8 @@ function setupUI() {
   });
 
   document.getElementById("stop-btn").addEventListener("click", () => {
-    const player = sim.player;
+    const player = getPlayer();
+    if (!player) return;
     if (player.state === STATE.DRILLING) {
       player.state = STATE.IDLE;
       player.drillTimer = 0;
@@ -810,6 +817,10 @@ function resetSimulation() {
     };
   });
   lastFrameTime = 0;
+}
+
+function getPlayer() {
+  return sim?.player ?? null;
 }
 
 function showStatus(message) {
