@@ -1,0 +1,180 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  --bg: #0b1220;
+  --panel: #141f33;
+  --panel-alt: #18263f;
+  --accent: #5fd1ff;
+  --text: #e4f1ff;
+  --muted: #8fa6c9;
+  --danger: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 100vh;
+}
+
+#game-wrap {
+  position: relative;
+  padding: 12px;
+}
+
+#game {
+  border: 2px solid #1d2b42;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#overlay {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.hud,
+.controls {
+  background: rgba(10, 18, 32, 0.8);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+button {
+  background: var(--accent);
+  border: none;
+  color: #08111f;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+#side-panel {
+  background: var(--panel);
+  padding: 16px;
+  border-left: 1px solid #20304f;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+h2 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+}
+
+section {
+  background: var(--panel-alt);
+  padding: 12px;
+  border-radius: 10px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.param label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+input[type="range"],
+input[type="text"] {
+  width: 100%;
+}
+
+#end-screen {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 18, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+#end-screen.hidden {
+  display: none;
+}
+
+.end-card {
+  background: var(--panel);
+  padding: 20px;
+  border-radius: 14px;
+  max-width: 900px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.heatmap-wrap {
+  margin: 12px 0;
+}
+
+#summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+#summary div {
+  background: #101a2a;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.end-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
