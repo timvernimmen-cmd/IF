@@ -1,8 +1,5 @@
+const WORLD = { leftUiWidth: 300, margin: 12 };
 const MAP_SIZE = 640;
-const WORLD = {
-  leftUiWidth: 320,
-  margin: 12,
-};
 
 const PARAMS = {
   width: WORLD.leftUiWidth + WORLD.margin * 2 + MAP_SIZE,
@@ -1825,7 +1822,7 @@ function updateHUD() {
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
   if (UI.debugState) {
-    UI.debugState.textContent = "";
+    UI.debugState.textContent = `canvas ${PARAMS.width}x${PARAMS.height} | world ${worldRect().w}x${worldRect().h}`;
   }
   if (UI.statsLine) {
     UI.statsLine.textContent = "";
