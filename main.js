@@ -1518,7 +1518,7 @@ function setupUI() {
     updateMatchSpeedLabel(simSpeedValue);
   });
   updateMatchSpeedLabel(simSpeedValue);
-  UI.timeScaleLabel.textContent = "Match length set";
+  UI.timeScaleLabel.textContent = "";
 
   const panel = document.getElementById("ui-panel");
   const stopEvents = (event) => {
