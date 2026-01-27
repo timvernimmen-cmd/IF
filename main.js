@@ -678,7 +678,7 @@ class Simulation {
       this.recordSuccessEvent(agent);
       this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
-        pushToast("You caught a fish — recent success, fishers usually stay longer.", "success");
+        pushToast("You caught a fish!", "success");
       } else {
         this.notifyNeighborCatch(agent);
       }
@@ -796,10 +796,7 @@ class Simulation {
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
       player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
-      pushToast(
-        "Nearby success — fishers tend to stay.",
-        "neighbor"
-      );
+      pushToast("Neighbor caught a fish nearby.", "neighbor");
     }
   }
   pickDestination(agent) {
