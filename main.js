@@ -1,3 +1,4 @@
+const BUILD_ID = "square-map-20260127-1";
 const WORLD = { leftUiWidth: 300, margin: 12 };
 const MAP_SIZE = 640;
 
@@ -1822,7 +1823,7 @@ function updateHUD() {
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
   if (UI.debugState) {
-    UI.debugState.textContent = `canvas ${PARAMS.width}x${PARAMS.height} | world ${worldRect().w}x${worldRect().h}`;
+    UI.debugState.textContent = `build ${BUILD_ID} | canvas ${PARAMS.width}x${PARAMS.height} | world ${worldRect().w}x${worldRect().h}`;
   }
   if (UI.statsLine) {
     UI.statsLine.textContent = "";
