@@ -48,6 +48,7 @@ body {
   overflow: hidden;
   border-radius: 20px;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  background: #ffffff;
 }
 
 #game {
@@ -186,6 +187,73 @@ body {
 
   #panel {
     max-height: 42dvh;
+  }
+}
+
+@media (max-width: 600px) {
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 6px;
+    gap: 8px;
+  }
+
+  #panel {
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+  }
+
+  #hudColumn {
+    gap: 8px;
+  }
+
+  #game-wrap {
+    flex: 1;
+    min-height: 0;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .hud,
+  .controls,
+  .gut {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+
+  .panel {
+    gap: 8px;
+  }
+
+  .controls {
+    gap: 6px;
+  }
+
+  .hint {
+    font-size: 11px;
+  }
+
+  .gut h3 {
+    font-size: 13px;
+  }
+
+  button {
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .seed-row,
+  .inline,
+  .toggle,
+  .gut-metric,
+  .gut-message {
+    font-size: 11px;
+  }
+
+  .toast {
+    font-size: 10px;
   }
 }
 

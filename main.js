@@ -1168,8 +1168,10 @@ const config = {
   parent: "game",
   backgroundColor: "#1a2d45",
   scale: {
-    mode: Phaser.Scale.RESIZE,
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: PARAMS.width,
+    height: PARAMS.height,
   },
   scene: {
     preload,
@@ -1195,9 +1197,9 @@ function create() {
   graphics = this.add.graphics();
   setupUI();
   resetSimulation();
-  fitCameraToContainer(this);
-  window.addEventListener("resize", () => fitCameraToContainer(this));
-  window.addEventListener("orientationchange", () => fitCameraToContainer(this));
+  fitCameraToContainer();
+  window.addEventListener("resize", () => fitCameraToContainer());
+  window.addEventListener("orientationchange", () => fitCameraToContainer());
   this.input.addPointer(1);
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
@@ -1225,15 +1227,10 @@ function create() {
   }
 }
 
-function fitCameraToContainer(scene) {
-  const el = document.getElementById("game");
-  if (!el) return;
-  const w = Math.max(1, el.clientWidth);
-  const h = Math.max(1, el.clientHeight);
-  scene.scale.resize(w, h);
-  const zoom = Math.min(w / PARAMS.width, h / PARAMS.height);
-  scene.cameras.main.setZoom(zoom);
-  scene.cameras.main.centerOn(PARAMS.width / 2, PARAMS.height / 2);
+function fitCameraToContainer() {
+  if (game?.scale) {
+    game.scale.refresh();
+  }
 }
 
 function update(time) {
