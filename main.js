@@ -1,10 +1,10 @@
 const BUILD_ID = "square-map-20260127-1";
-const WORLD = { leftUiWidth: 300, margin: 12 };
-const MAP_SIZE = 640;
+const WORLD = { leftUiWidth: 0, margin: 12 };
+const MAP_SIZE = 820 - WORLD.margin * 2;
 
 const PARAMS = {
-  width: WORLD.leftUiWidth + WORLD.margin * 2 + MAP_SIZE,
-  height: MAP_SIZE + WORLD.margin * 2,
+  width: 820,
+  height: 820,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -796,7 +796,7 @@ class Simulation {
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
       player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
-      pushToast("Someone nearby just caught a fish.", "neighbor");
+      pushToast("A nearby fisher just caught a fish.", "neighbor");
     }
   }
   pickDestination(agent) {
@@ -1517,10 +1517,7 @@ function setupUI() {
   const stopEvents = (event) => {
     event.stopPropagation();
   };
-  const stopWheel = (event) => {
-    event.stopPropagation();
-    event.preventDefault();
-  };
+  const stopOnly = (event) => event.stopPropagation();
   panel?.addEventListener("pointerdown", stopEvents);
   panel?.addEventListener("pointermove", stopEvents);
   panel?.addEventListener("pointerup", stopEvents);
@@ -1528,8 +1525,8 @@ function setupUI() {
   panel?.addEventListener("mousemove", stopEvents);
   panel?.addEventListener("mouseup", stopEvents);
   panel?.addEventListener("touchstart", stopEvents, { passive: false });
-  panel?.addEventListener("touchmove", stopWheel, { passive: false });
-  panel?.addEventListener("wheel", stopWheel, { passive: false });
+  panel?.addEventListener("touchmove", stopOnly, { passive: true });
+  panel?.addEventListener("wheel", stopOnly, { passive: true });
 
   document.getElementById("show-gut").addEventListener("change", (event) => {
     uiState.showGut = event.target.checked;
