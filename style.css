@@ -201,7 +201,14 @@ body {
 
   #gameWrap {
     width: 100%;
+    aspect-ratio: 1 / 1;
+    height: auto;
     max-height: 60vh;
+  }
+
+  #gameWrap canvas {
+    width: 100% !important;
+    height: 100% !important;
   }
 }
 
