@@ -1689,6 +1689,8 @@ function updateMatchSpeedLabel(label) {
   let labelText = "Match duration: standard";
   if (PARAMS.matchSpeed <= 0.33) {
     labelText = "Match duration: short";
+  } else if (PARAMS.matchSpeed >= 0.995) {
+    labelText = "Match duration: real-time (3 hours)";
   } else if (PARAMS.matchSpeed >= 0.67) {
     labelText = "Match duration: long";
   }
