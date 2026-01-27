@@ -371,13 +371,20 @@ input[type="range"] {
 }
 
 .toast-success {
+  background: rgba(42, 60, 86, 0.95);
   border: 1px solid rgba(122, 215, 255, 0.4);
 }
 
 .toast-neighbor {
+  background: rgba(42, 60, 86, 0.95);
   border: 1px solid rgba(255, 224, 138, 0.4);
 }
 
 .toast-info {
   border: 1px solid rgba(157, 179, 199, 0.3);
+}
+
+.toast-factoid {
+  background: rgba(12, 18, 32, 0.9);
+  border: 1px solid rgba(100, 120, 150, 0.2);
 }

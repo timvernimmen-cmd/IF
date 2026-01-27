@@ -1157,7 +1157,62 @@ const uiState = {
 const toastState = {
   items: [],
   lifetime: 2.5,
+  factoidIndex: -1,
+  nextFactoidAt: 0,
+  factoidText: "",
 };
+
+const FACTOIDS = [
+  "In competitive settings, anglers try to hide their catches to prevent attracting a crowd.",
+  "Watching others is a survival strategy that humans have used for thousands of years.",
+  "On average, it takes about 30 seconds to manually drill a hole through the ice.",
+  "Competitive ice fishers walk an average of over 1.2 kilometers during a 3-hour event.",
+  "Some anglers visit over 30 different spots in a single 3-hour competition.",
+  "Ice fishers spend about 62% of their time actually fishing and the rest walking or drilling.",
+  "If an angler catches nothing, their next move is usually a long walk to a completely new area.",
+  "Anglers naturally turn at sharper angles to stay in an area where they just caught a fish.",
+  "The time spent drilling holes is a cost anglers try to minimize.",
+  "In deep snow, relocation takes longer, which encourages anglers to stay at a hole slightly longer.",
+  "Fishers often return to an old hole later in the day to see if the fish have returned.",
+  "During competitions, participants are often banned from drilling within 5 meters of each other.",
+  "Moving too often can be just as bad as staying too long—it’s a delicate balance.",
+  "Successful anglers tend to drill holes in a localized cluster rather than a random scatter.",
+  "Competitive anglers must carry all their gear while walking, which adds to the physical exertion.",
+  "GPS tracking shows anglers rarely walk in random patterns; their movement is highly strategic.",
+  "Even on a huge lake, fishers often stick to a small percentage of the total surface area.",
+  "Experienced anglers are very good at judging when a hole has been \"depleted\" of fish.",
+  "If the fishing is good overall on the lake, anglers become impatient and leave bad spots faster.",
+  "If the fishing is tough across the whole lake, anglers tend to stay at each hole longer.",
+  "Anglers tend to quit a spot when their catch rate drops below the average catch rate of the lake.",
+  "Leaving a spot too late wastes time; leaving too early leaves fish behind.",
+  "The Eurasian perch you’re fishing swims in schools, so if you catch one, there are likely more.",
+  "Perch are often found near underwater structures like drop-offs or sunken islands.",
+  "Fish distribution is patchy, meaning big empty spaces separate clusters of fish.",
+  "Anglers use depth maps to find underwater hills where fish might congregate.",
+  "Shallow water sometimes holds more fish, but they can be spooked easily by the drilling noise.",
+  "In winter, fish metabolism slows down, so they don't chase bait as aggressively as in summer.",
+  "Snow depth and light levels can change where the fish are hiding.",
+  "In murky or turbid water, fish rely more on vibration than sight.",
+  "Even on the same lake, fish location can change drastically from year to year.",
+  "Predators like pike often lurk near the schools of perch that anglers are targeting.",
+  "Ice fishing is an ancient subsistence method that has evolved into a modern competitive sport.",
+  "In Finland, ice fishing reflects \"sisu\"—a cultural mindset of determination in harsh conditions.",
+  "Competitive ice fishing emphasizes physical endurance and skill, not just luck.",
+  "Participants in studies often wear heart rate monitors to track the physical exertion of fishing.",
+  "Chumming (throwing bait into the water to attract fish) is often banned in competitions.",
+  "The most motivated ice fishers value \"being close to nature\" just as much as catching fish.",
+  "Standard ice fishing competitions often last exactly three hours.",
+  "In competitions, the winner is usually decided by the total weight of the catch.",
+  "The \"vertical rod\" used in ice fishing is tiny compared to a casting rod.",
+  "Walking speed on ice can vary greatly depending on whether the snow is packed or loose powder.",
+  "Many ice fishers have been practicing the sport for over 40 years.",
+  "Studies show that fishing success is partly luck, but skill plays a huge role over time.",
+  "Competitive ice fishing is one of few sports where participants of all ages compete side-by-side.",
+  "Ice fishing is cognitively demanding, requiring memory, navigation, and social awareness.",
+  "Many anglers rate fitness and exercise as a top reason for ice fishing.",
+];
+
+const FACTOID_INTERVAL = 4;
 
 const clickMarkers = [];
 
@@ -1800,6 +1855,18 @@ function renderToasts() {
   const now = sim?.simTime ?? 0;
   toastState.items = toastState.items.filter((toast) => toast.expiresAt > now);
   UI.toastStack.innerHTML = "";
+  if (toastState.items.length === 0) {
+    if (!toastState.factoidText || now >= toastState.nextFactoidAt) {
+      toastState.factoidIndex = (toastState.factoidIndex + 1) % FACTOIDS.length;
+      toastState.factoidText = FACTOIDS[toastState.factoidIndex];
+      toastState.nextFactoidAt = now + FACTOID_INTERVAL;
+    }
+    const factoidEl = document.createElement("div");
+    factoidEl.className = "toast toast-factoid";
+    factoidEl.textContent = toastState.factoidText;
+    UI.toastStack.appendChild(factoidEl);
+    return;
+  }
   toastState.items.forEach((toast) => {
     const remaining = toast.expiresAt - now;
     const fadeStart = 0.6;
