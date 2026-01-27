@@ -1,10 +1,10 @@
 const BUILD_ID = "square-map-20260127-1";
 const WORLD = { leftUiWidth: 0, margin: 12 };
-const MAP_SIZE = 800 - WORLD.margin * 2;
+const MAP_SIZE = 720 - WORLD.margin * 2;
 
 const PARAMS = {
-  width: 820,
-  height: 820,
+  width: 720,
+  height: 720,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -1167,10 +1167,8 @@ const config = {
   parent: "game",
   backgroundColor: "#1a2d45",
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: PARAMS.width,
-    height: PARAMS.height,
   },
   scene: {
     preload,
@@ -1195,10 +1193,20 @@ function preload() {}
 function create() {
   graphics = this.add.graphics();
   setupUI();
-  resetSimulation();
-  fitCameraToContainer();
-  window.addEventListener("resize", () => fitCameraToContainer());
-  window.addEventListener("orientationchange", () => fitCameraToContainer());
+  const resizeToParent = () => {
+    const parent = document.getElementById("game");
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    const size = Math.floor(Math.min(rect.width, rect.height));
+    if (!Number.isFinite(size) || size <= 0) return;
+    this.scale.resize(size, size);
+    PARAMS.width = size;
+    PARAMS.height = size;
+    resetSimulation();
+  };
+  resizeToParent();
+  window.addEventListener("resize", resizeToParent);
+  window.addEventListener("orientationchange", resizeToParent);
   this.input.addPointer(1);
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
