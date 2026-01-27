@@ -1,4 +1,3 @@
-const BUILD_ID = "square-map-20260127-1";
 const WORLD = { leftUiWidth: 0, margin: 12 };
 const MAP_SIZE = 720 - WORLD.margin * 2;
 
@@ -1165,7 +1164,7 @@ const clickMarkers = [];
 const config = {
   type: Phaser.CANVAS,
   parent: "game",
-  backgroundColor: "#1a2d45",
+  backgroundColor: "#f8fbff",
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -1464,7 +1463,6 @@ function setupUI() {
   UI.timeScaleLabel = document.getElementById("time-scale-label");
   UI.catches = document.getElementById("player-catches");
   UI.rank = document.getElementById("player-rank");
-  UI.debugState = document.getElementById("debug-state");
   UI.statsLine = document.getElementById("stats-line");
   UI.playerDebug = document.getElementById("player-debug");
   UI.gutPanel = document.getElementById("gut-panel");
@@ -1709,7 +1707,7 @@ function updateMatchSpeedLabel(label) {
   if (PARAMS.matchSpeed <= 0.005) {
     labelText = "Match duration: very fast (3 minutes)";
   } else if (PARAMS.matchSpeed >= 0.995) {
-    labelText = "Match duration: real-time (3 hours)";
+    labelText = "Match duration: realtime (3 hours)";
   }
   label.textContent = labelText;
 }
@@ -1826,9 +1824,6 @@ function updateHUD() {
   UI.timer.textContent = `${min}:${sec}`;
   UI.catches.textContent = sim.player.catchesTotal;
   UI.rank.textContent = estimateRank(sim.player.catchesTotal);
-  if (UI.debugState) {
-    UI.debugState.textContent = `build ${BUILD_ID} | canvas ${PARAMS.width}x${PARAMS.height} | world ${worldRect().w}x${worldRect().h}`;
-  }
   if (UI.statsLine) {
     UI.statsLine.textContent = "";
   }
@@ -1870,7 +1865,11 @@ function updateGutPanel() {
   const compression = REAL_MATCH_SECONDS / targetGameSeconds;
   const timeSinceLastCatchReal = player.timeSinceLastCatch / compression;
   const tau = timeSinceLastCatchReal / REAL_MATCH_SECONDS;
-  UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
+  if (player.catchesTotal === 0) {
+    UI.gutTime.textContent = "You’ve caught nothing so far.";
+  } else {
+    UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
+  }
   if (UI.gutRecent) {
     UI.gutRecent.textContent = `Nearby recent catches: ${nearbyRecentSuccessCount}`;
   }

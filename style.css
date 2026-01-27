@@ -21,7 +21,8 @@ body {
 
 body {
   background: #ffffff;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   color: var(--text);
 }
 
@@ -52,7 +53,7 @@ body {
 }
 
 #gameWrap {
-  width: min(92vw, 92vh);
+  width: min(96vw, 70vh);
   aspect-ratio: 1 / 1;
   max-width: 100%;
   max-height: calc(100vh - 140px);
@@ -62,6 +63,7 @@ body {
   position: relative;
   display: block;
   touch-action: manipulation;
+  margin: 0 auto;
 }
 
 #game,
@@ -98,11 +100,6 @@ body {
 
 .time-scale {
   margin-left: 6px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.debug-state {
   font-size: 11px;
   color: var(--muted);
 }
@@ -200,7 +197,7 @@ body {
   }
 
   #gameWrap {
-    width: 96vw;
+    width: min(96vw, 70vh);
     aspect-ratio: 1 / 1;
     max-height: 55vh;
     margin: 0 auto;
