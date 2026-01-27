@@ -52,7 +52,7 @@ const PARAMS = {
 };
 
 const WORLD = {
-  leftUiWidth: 300,
+  leftUiWidth: 0,
   margin: 12,
 };
 
@@ -678,7 +678,7 @@ class Simulation {
       this.recordSuccessEvent(agent);
       this.recordGlobalSuccessSignal(agent);
       if (agent.isPlayer) {
-        pushToast("You caught a fish!", "success");
+        pushToast("Catch!", "success");
       } else {
         this.notifyNeighborCatch(agent);
       }
@@ -758,9 +758,9 @@ class Simulation {
       y: agent.y - 14,
       timer: 0,
       duration: 0.9,
-      text: "Fish!",
+      text: "Catch!",
       textObj: this.scene.add
-        .text(agent.x + 8, agent.y - 14, "Fish!", {
+        .text(agent.x + 8, agent.y - 14, "Catch!", {
           fontSize: "12px",
           color: "#f7fbff",
           fontStyle: "bold",
@@ -796,7 +796,7 @@ class Simulation {
     const dist2 = dx * dx + dy * dy;
     if (dist2 < PARAMS.neighborRadius * PARAMS.neighborRadius) {
       player.suppressLeaveUntil = this.simTime + PARAMS.neighborSuccessSuppress;
-      pushToast("Neighbor caught a fish nearby.", "neighbor");
+      pushToast("Someone nearby just caught a fish.", "neighbor");
     }
   }
   pickDestination(agent) {
@@ -1684,15 +1684,28 @@ function getContestDuration() {
   return Phaser.Math.Linear(180, REAL_MATCH_SECONDS, PARAMS.matchSpeed);
 }
 
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
 function updateMatchSpeedLabel(label) {
   if (!label) return;
-  let labelText = "Match duration: standard";
-  if (PARAMS.matchSpeed <= 0.33) {
-    labelText = "Match duration: short";
+  const targetGameSeconds = getContestDuration();
+  let labelText = `Match duration: ${formatDuration(targetGameSeconds)}`;
+  if (PARAMS.matchSpeed <= 0.005) {
+    labelText = "Match duration: very fast (3 minutes)";
   } else if (PARAMS.matchSpeed >= 0.995) {
     labelText = "Match duration: real-time (3 hours)";
-  } else if (PARAMS.matchSpeed >= 0.67) {
-    labelText = "Match duration: long";
   }
   label.textContent = labelText;
 }
