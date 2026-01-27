@@ -1866,7 +1866,7 @@ function updateGutPanel() {
   const timeSinceLastCatchReal = player.timeSinceLastCatch / compression;
   const tau = timeSinceLastCatchReal / REAL_MATCH_SECONDS;
   if (player.catchesTotal === 0) {
-    UI.gutTime.textContent = "You’ve caught nothing so far.";
+    UI.gutTime.textContent = "No catches yet";
   } else {
     UI.gutTime.textContent = `${Math.floor(timeSinceLastCatchReal)}s`;
   }
