@@ -1,6 +1,6 @@
 const PARAMS = {
-  width: 860,
-  height: 540,
+  width: 720,
+  height: 720,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -57,11 +57,7 @@ const WORLD = {
 };
 
 function worldRect() {
-  const x = WORLD.leftUiWidth + WORLD.margin;
-  const y = WORLD.margin;
-  const w = PARAMS.width - x - WORLD.margin;
-  const h = PARAMS.height - WORLD.margin * 2;
-  return { x, y, w, h };
+  return { x: 0, y: 0, w: PARAMS.width, h: PARAMS.height };
 }
 
 const SHORE_NOFISH = 18;
