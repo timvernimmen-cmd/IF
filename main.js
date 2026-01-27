@@ -1468,7 +1468,6 @@ function setupUI() {
   UI.gutPanel = document.getElementById("gut-panel");
   UI.gutTime = document.getElementById("gut-time");
   UI.gutMessage = document.getElementById("gut-message");
-  UI.gutSocial = document.getElementById("gut-social");
   UI.gutRecent = document.getElementById("gut-recent-catches");
   UI.toastStack = document.getElementById("toast-stack");
   UI.status = document.getElementById("status-message");
@@ -1873,24 +1872,13 @@ function updateGutPanel() {
   if (UI.gutRecent) {
     UI.gutRecent.textContent = `Nearby recent catches: ${nearbyRecentSuccessCount}`;
   }
-  let socialLabel = "none";
-  if (nearbyRecentSuccessCount >= 4) {
-    socialLabel = "strong";
-  } else if (nearbyRecentSuccessCount >= 2) {
-    socialLabel = "moderate";
-  } else if (nearbyRecentSuccessCount >= 1) {
-    socialLabel = "weak";
-  }
-  if (UI.gutSocial) {
-    UI.gutSocial.textContent = socialLabel;
-  }
   if (UI.gutMessage) {
     let shift = 0;
-    if (socialLabel === "weak") {
+    if (nearbyRecentSuccessCount >= 1 && nearbyRecentSuccessCount < 2) {
       shift = 0.005;
-    } else if (socialLabel === "moderate") {
+    } else if (nearbyRecentSuccessCount >= 2 && nearbyRecentSuccessCount < 4) {
       shift = 0.01;
-    } else if (socialLabel === "strong") {
+    } else if (nearbyRecentSuccessCount >= 4) {
       shift = 0.015;
     }
     const t0 = 0.01 + shift;
