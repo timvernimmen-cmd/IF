@@ -1193,20 +1193,6 @@ function preload() {}
 function create() {
   graphics = this.add.graphics();
   setupUI();
-  const resizeToParent = () => {
-    const parent = document.getElementById("game");
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    const size = Math.floor(Math.min(rect.width, rect.height));
-    if (!Number.isFinite(size) || size <= 0) return;
-    this.scale.resize(size, size);
-    PARAMS.width = size;
-    PARAMS.height = size;
-    resetSimulation();
-  };
-  resizeToParent();
-  window.addEventListener("resize", resizeToParent);
-  window.addEventListener("orientationchange", resizeToParent);
   this.input.addPointer(1);
   this.input.on("pointerdown", (pointer) => {
     console.log("PHASER_POINTERDOWN");
@@ -1232,6 +1218,20 @@ function create() {
       handleMapClick(x, y, event);
     });
   }
+  const resizeToSquare = () => {
+    const wrap = document.getElementById("gameWrap");
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const size = Math.floor(Math.min(rect.width, rect.height));
+    if (!Number.isFinite(size) || size <= 0) return;
+    this.scale.resize(size, size);
+    PARAMS.width = size;
+    PARAMS.height = size;
+    resetSimulation();
+  };
+  resizeToSquare();
+  window.addEventListener("resize", resizeToSquare);
+  window.addEventListener("orientationchange", resizeToSquare);
 }
 
 function fitCameraToContainer() {
