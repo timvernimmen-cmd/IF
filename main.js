@@ -1,6 +1,6 @@
 const PARAMS = {
-  width: 860,
-  height: 860,
+  width: 900,
+  height: 900,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -49,11 +49,6 @@ const PARAMS = {
   forbiddenZone: { x: 0, y: 0, w: 0, h: 0 },
   devMode: false,
   seed: "ice-lake-01",
-};
-
-const WORLD = {
-  leftUiWidth: 0,
-  margin: 12,
 };
 
 function worldRect() {
