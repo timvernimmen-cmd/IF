@@ -1,6 +1,6 @@
 const PARAMS = {
-  width: 720,
-  height: 720,
+  width: 860,
+  height: 860,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -22,7 +22,7 @@ const PARAMS = {
   targetDwell: 35,
   leaveCheckInterval: 10,
   fishGridCols: 80,
-  fishGridRows: 50,
+  fishGridRows: 80,
   patchiness: 6,
   depletion: 0.06,
   recovery: 0.003,
