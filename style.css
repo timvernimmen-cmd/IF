@@ -28,7 +28,7 @@ body {
 #app {
   display: flex;
   gap: 16px;
-  align-items: start;
+  align-items: flex-start;
   height: 100vh;
   width: 100vw;
 }
@@ -60,7 +60,7 @@ body {
 }
 
 #gameWrap {
-  width: 100%;
+  width: min(92vw, 92vh);
   aspect-ratio: 1 / 1;
   max-width: 100%;
   max-height: calc(100vh - 140px);
@@ -191,7 +191,7 @@ body {
   flex-wrap: wrap;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 900px) {
   #app {
     flex-direction: column;
   }
@@ -206,8 +206,7 @@ body {
   }
 
   #gameWrap {
-    width: 100vw;
-    max-width: 100vw;
+    width: 96vw;
     aspect-ratio: 1 / 1;
     max-height: 55vh;
     margin: 0 auto;

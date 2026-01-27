@@ -1,10 +1,10 @@
 const BUILD_ID = "square-map-20260127-1";
 const WORLD = { leftUiWidth: 0, margin: 12 };
-const MAP_SIZE = 820 - WORLD.margin * 2;
+const MAP_SIZE = 800 - WORLD.margin * 2;
 
 const PARAMS = {
-  width: 820,
-  height: 820,
+  width: 800,
+  height: 800,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
@@ -56,12 +56,11 @@ const PARAMS = {
 };
 
 function worldRect() {
-  return {
-    x: WORLD.leftUiWidth + WORLD.margin,
-    y: WORLD.margin,
-    w: MAP_SIZE,
-    h: MAP_SIZE,
-  };
+  const x = WORLD.margin;
+  const y = WORLD.margin;
+  const w = PARAMS.width - WORLD.margin * 2;
+  const h = PARAMS.height - WORLD.margin * 2;
+  return { x, y, w, h };
 }
 
 const SHORE_NOFISH = 18;
