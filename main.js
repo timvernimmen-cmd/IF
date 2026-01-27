@@ -3,8 +3,8 @@ const WORLD = { leftUiWidth: 0, margin: 12 };
 const MAP_SIZE = 800 - WORLD.margin * 2;
 
 const PARAMS = {
-  width: 800,
-  height: 800,
+  width: 820,
+  height: 820,
   mapMargin: 0,
   npcCount: 9,
   npcSpeed: 22,
